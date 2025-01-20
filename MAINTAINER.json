@@ -1,17 +1,17 @@
 [
     {
     "tag": "stm32l496-st-nucleo",
-    "path": "/bsp/stm32/stm32l496-st-nucleo", 
+    "path": "bsp/stm32/stm32l496-st-nucleo", 
     "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
     },
     {
         "tag": "stm32",
-        "path": "/bsp/stm32/",
+        "path": "bsp/stm32",
         "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com"
     },
     {
         "tag": "kernel: memory",
-        "path": "/kernel/",
+        "path": "kernel",
         "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com"
     }
 ]
