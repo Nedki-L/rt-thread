@@ -51,6 +51,11 @@ jobs:
           PR_NUMBER=${{ github.event.pull_request.number }}
           COMMENT_BODY="${{ env.COMMENT_BODY }}"
 
+          if [ -z "$COMMENT_BODY" ]; then
+            echo "Error: COMMENT_BODY is empty. Skipping comment posting."
+            exit 1
+          fi
+
           # Post the comment to GitHub PR
           curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           -H "Content-Type: application/json" \
