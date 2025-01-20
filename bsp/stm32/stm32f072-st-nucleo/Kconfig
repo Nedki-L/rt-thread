@@ -6,7 +6,7 @@ RTT_DIR := ../../..
 
 PKGS_DIR := packages
 
-config SOC_STM32F072RB
+config SOC_STM32F072RBs
     bool
     select SOC_SERIES_STM32F0
     select RT_USING_COMPONENTS_INIT
