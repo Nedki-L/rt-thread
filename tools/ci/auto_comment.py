@@ -18,8 +18,9 @@ try:
 except FileNotFoundError:
     print(f"Error: {maintainers_file} not found!")
     exit(1)
-except json.JSONDecodeError:
+except json.JSONDecodeError as e:
     print(f"Error: Failed to decode {maintainers_file}, invalid JSON!")
+    print(f"Details: {e}")
     exit(1)
 
 # 定义匹配所有者的函数
@@ -50,9 +51,16 @@ for owner in owners:
         print(f"Warning: Malformed owner entry: {owner}")
         continue
 
+    # 查找该所有者对应的tag
+    matching_maintainers = [maintainer for maintainer in maintainers_data if github_id in maintainer['owner']]
+    if matching_maintainers:
+        tag = matching_maintainers[0].get('tag', 'No tag')
+    else:
+        tag = 'No tag'
+
     # 构造评论
     comment += f"@{github_id}\n"
-    comment += f"Tag: {maintainer.get('tag', 'No tag')}\n"
+    comment += f"Tag: {tag}\n"
     comment += f"Please take a review of this tag\n\n"
 
 # 输出生成的评论
