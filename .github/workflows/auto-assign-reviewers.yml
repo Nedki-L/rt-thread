@@ -30,7 +30,7 @@ jobs:
           "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
           | jq -r '.[].filename')
           echo "Modified files: $PR_FILES"
-          echo "::set-output name=files::$PR_FILES"
+          echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
       - name: Load MAINTAINER.json and generate comment
         id: generate_comment
@@ -40,7 +40,7 @@ jobs:
       - name: Post comment to PR
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ steps.generate_comment.outputs.comment }}"
+          COMMENT_BODY="${{ env.COMMENT_BODY }}"
 
           if [ -z "$COMMENT_BODY" ]; then
             echo "Error: COMMENT_BODY is empty. Skipping comment posting."
