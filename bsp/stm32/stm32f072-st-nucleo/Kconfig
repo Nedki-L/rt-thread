@@ -10,7 +10,7 @@ config SOC_STM32F072RB
     bool
     select SOC_SERIES_STM32F0
     select RT_USING_COMPONENTS_INIT
-    select RT_USING_USER_MAIN
+    select RT_USING_USER_MAINs
     default y
 
 config BOARD_STM32F072_NUCLEO
