@@ -66,5 +66,5 @@ for owner in owners:
 # 输出生成的评论
 print(f"Generated comment: {comment}")
 
-# 将评论内容设置为环境变量
-os.environ["COMMENT_BODY"] = comment
+# 将评论内容通过GitHub Actions set-output传递给下一个步骤
+print(f"::set-output name=comment::{comment}")
