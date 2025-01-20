@@ -6,7 +6,7 @@ on:
 
 jobs:
   auto-comment:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -32,12 +32,11 @@ jobs:
           echo "Modified files: $PR_FILES"
           echo "::set-output name=files::$PR_FILES"
 
-      - name: Load MAINTAINER.json and generate comment
-        id: generate_comment
+      - name: Create Python script to process MAINTAINER.json
         run: |
+          echo """
           import json
           import os
-          import requests
 
           # MAINTAINER.json path
           maintainers_file = './MAINTAINER.json'
@@ -59,7 +58,7 @@ jobs:
 
           # Get matching owners based on modified files
           owners = find_owners_for_file(pr_files, maintainers_data)
-          
+
           # Generate GitHub comment
           comment = ""
           for owner in owners:
@@ -71,6 +70,10 @@ jobs:
           # Output the comment
           print(f"Generated comment: {comment}")
           os.environ["COMMENT_BODY"] = comment
+          """ > process_comment.py
+
+      - name: Run Python script to generate comment
+        run: python process_comment.py
 
       - name: Post comment to PR
         run: |
