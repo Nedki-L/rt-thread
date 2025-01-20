@@ -66,5 +66,6 @@ for owner in owners:
 # 输出生成的评论
 print(f"Generated comment: {comment}")
 
-# 将评论内容通过GitHub Actions set-output传递给下一个步骤
-print(f"::set-output name=comment::{comment}")
+# 使用环境文件传递评论内容
+with open(os.getenv('GITHUB_ENV'), 'a') as env_file:
+    env_file.write(f"COMMENT_BODY={comment}\n")
