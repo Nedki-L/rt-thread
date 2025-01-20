@@ -9,19 +9,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout code
       - name: Checkout code
         uses: actions/checkout@v2
 
+      # Set up Python environment
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.9'
 
+      # Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
+      # Get PR modified files
       - name: Get PR modified files
         id: pr_files
         run: |
@@ -32,51 +36,22 @@ jobs:
           echo "Modified files: $PR_FILES"
           echo "::set-output name=files::$PR_FILES"
 
-      - name: Load MAINTAINER.json and generate comment
+      # Run Python script to generate comment based on MAINTAINER.json
+      - name: Generate comment from MAINTAINER.json
         id: generate_comment
         run: |
-          import json
-          import os
-          import requests
+          # Pass PR_FILES environment variable to Python script
+          python3 tools/ci/auto_comment.py
+        env:
+          PR_FILES: "${{ steps.pr_files.outputs.files }}"
 
-          # MAINTAINER.json path
-          maintainers_file = './MAINTAINER.json'
-
-          # PR files from previous step
-          pr_files = "${{ steps.pr_files.outputs.files }}".split(',')
-
-          # Read MAINTAINER.json and match files
-          with open(maintainers_file, 'r') as file:
-              maintainers_data = json.load(file)
-
-          # Function to find matching owners
-          def find_owners_for_file(files, maintainers):
-              owners = []
-              for maintainer in maintainers:
-                  if any(file.startswith(maintainer['path']) for file in files):
-                      owners.extend(maintainer['owner'].split(','))
-              return owners
-
-          # Get matching owners based on modified files
-          owners = find_owners_for_file(pr_files, maintainers_data)
-          
-          # Generate GitHub comment
-          comment = ""
-          for owner in owners:
-              github_id = owner.split('(')[1].split(')')[0].strip()
-              comment += f"@{github_id}\n"
-              comment += f"Tag: {maintainer['tag']}\n"
-              comment += f"Please take a review of this tag\n\n"
-
-          # Output the comment
-          print(f"Generated comment: {comment}")
-          os.environ["COMMENT_BODY"] = comment
-
+      # Post comment to PR
       - name: Post comment to PR
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           COMMENT_BODY="${{ env.COMMENT_BODY }}"
 
+          # Post the comment to GitHub PR
           curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d "{\"body\": \"$COMMENT_BODY\"}" \
