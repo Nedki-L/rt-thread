@@ -4,11 +4,11 @@ import requests
 import re
 
 # 获取环境变量
-pr_files = os.getenv("PR_FILES", "").splitlines()
+pr_files = os.getenv("PR_FILES", "").split(",")
 maintainers_file = './MAINTAINER.json'
 
 # 错误处理：如果没有文件列表，则提前退出
-if not pr_files:
+if not pr_files or pr_files == ['']:
     print("No modified files found, exiting.")
     exit(0)
 
@@ -27,13 +27,13 @@ except json.JSONDecodeError as e:
 # 定义匹配所有者的函数
 def find_owners_for_file(files, maintainers):
     owners = {}
-    for maintainer in maintainers:
-        # 通过正则表达式检查文件路径是否匹配
-        for file in files:
+    for file in files:
+        for maintainer in maintainers:
             if re.match(f'^{maintainer["path"]}', file):
-                if maintainer['tag'] not in owners:
-                    owners[maintainer['tag']] = []
-                owners[maintainer['tag']].extend(maintainer['owner'].split(','))
+                tag = maintainer["tag"]
+                if tag not in owners:
+                    owners[tag] = set()
+                owners[tag].update(maintainer['owner'].split(','))
     return owners
 
 # 获取与修改文件匹配的所有者
@@ -44,84 +44,43 @@ if not owners:
     print("No matching owners found for the modified files.")
     exit(0)
 
-# 改进所有者信息提取
+# 提取评论格式化的所有者名字
 def extract_owner_name(owner):
-    # 优化提取所有者的格式
     match = re.match(r'.*\(([^)]+)\).*', owner)
-    if match:
-        return match.group(1).strip()
-    return owner.strip()  # 默认返回整个名字（如果没有符合的格式）
+    return match.group(1).strip() if match else owner.strip()
 
-# 生成评论内容
-comment = ""
-new_owners = set()
-for tag, owners_list in owners.items():
-    owners_set = set(extract_owner_name(owner) for owner in owners_list)
-    new_owners.update(owners_set)
-
-    # 格式化评论
-    if len(owners_set) > 1:
-        comment += f"@{' @'.join(owners_set)}\n"
-    else:
-        comment += f"@{next(iter(owners_set))}\n"
-    comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
-
-# 移除评论中的换行符和额外的空格
-comment = comment.replace('\n', ' ').strip()
-
-# 打印生成的评论内容，调试输出
-print(f"Generated comment: {comment}")
-
-# 如果没有生成评论内容，退出并打印信息
-if not comment:
-    print("No comment generated. Exiting.")
-    exit(1)
-
-# 确保 COMMENT_BODY 被正确传递到环境变量
-comment_file = '/tmp/comment_body.txt'
-with open(comment_file, 'w') as f:
-    f.write(comment)
-
-print(f"Comment written to: {comment_file}")
-
-# 获取当前 PR 的评论
-pr_number = os.getenv("PR_NUMBER")
+# 获取当前 PR 的所有评论
+pr_number = os.getenv("GITHUB_EVENT_PULL_REQUEST_NUMBER")
 response = requests.get(
     f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
     headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
 )
 
-# 打印API返回的数据，以便调试
-print("Response from GitHub API:", response.json())
+if response.status_code != 200:
+    print(f"Error: Unable to fetch comments for PR #{pr_number}")
+    exit(1)
 
-# 获取现有评论的 ID 和内容
 existing_comments = response.json()
-existing_comment_body = ""
-existing_comment_id = None
+mentioned_owners = set()
 for comment_data in existing_comments:
-    if isinstance(comment_data, dict) and 'body' in comment_data:  # 检查是否为字典并包含body字段
-        if "CI Reviewer" in comment_data['body']:  # 假设评论包含特定标识
-            existing_comment_body = comment_data['body']
-            existing_comment_id = comment_data['id']
-            break
-
-# 逻辑判断：是否需要新增评论
-if existing_comment_body:
-    # 比较当前评论与已有评论的差异，决定是否更新或新增
-    existing_owners = set(word.strip('@') for word in existing_comment_body.split() if word.startswith('@'))
-    if not new_owners.issubset(existing_owners):
-        # 如果新维护者不是现有评论的一部分，新增评论
-        print("Adding new comment with new maintainers.")
-        requests.post(
-            f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
-            headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}", "Content-Type": "application/json"},
-            json={"body": comment}
+    if 'body' in comment_data:
+        mentioned_owners.update(
+            word.strip('@') for word in comment_data['body'].split() if word.startswith('@')
         )
-else:
-    # 如果没有找到现有评论，则添加新评论
-    print("Adding new comment.")
-    requests.post(
-        f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
-        headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}", "Content-Type": "application/json"},
-        json={"body": comment}
-    )
+
+# 根据未提及的维护者生成评论
+comments_dir = "/tmp/comments"
+os.makedirs(comments_dir, exist_ok=True)
+
+for tag, owners_list in owners.items():
+    owners_set = {extract_owner_name(owner) for owner in owners_list}
+    new_owners = owners_set - mentioned_owners
+
+    if new_owners:
+        comment_body = f"@{' @'.join(new_owners)}\nTag: {tag}\nPlease take a review of this tag\n"
+        comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}.txt"
+        with open(comment_file_path, 'w') as f:
+            f.write(comment_body)
+        mentioned_owners.update(new_owners)
+
+print(f"Comments generated in: {comments_dir}")
