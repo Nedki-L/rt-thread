@@ -1,59 +1,69 @@
-name: Auto Assign Reviewers
+name: Auto Reviewer Based on MAINTAINER.json
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
 
 jobs:
-  get-changed-files:
+  auto-comment:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-        
-      - name: Fetch modified files using GitHub API
-        id: fetch_files
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests jq
+
+      - name: Get PR modified files
+        id: pr_files
         run: |
           echo "Fetching modified files for the PR..."
-
-          # 使用 GitHub API 获取修改的文件列表
           PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
           | jq -r '.[].filename' | tr '\n' ',' | sed 's/,$//')  # 格式化文件列表
-
-          # 输出修改的文件
           echo "Modified files: $PR_FILES"
-          echo "::set-output name=modified_files::${PR_FILES}"
-
-  generate-comments:
-    runs-on: ubuntu-latest
-    needs: get-changed-files
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Fetch MAINTAINER.json
-        id: fetch_maintainers
-        run: |
-          echo "Fetching MAINTAINER.json from repository..."
-          curl -O https://raw.githubusercontent.com/${{ github.repository }}/main/MAINTAINER.json
-          cat MAINTAINER.json
+          echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
       - name: Generate comments
-        id: generate_comments
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}  # 传递正确的 PR 编号
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_FILES: ${{ env.PR_FILES }}
         run: |
-          echo "Generating comments based on modified files and MAINTAINER.json..."
           python3 tools/ci/auto_comment.py
 
-      - name: Upload comment files
-        if: success()
+      - name: Post comments to PR
         run: |
-          echo "Uploading generated comment files..."
-          for file in /tmp/comments/*; do
-            echo "Uploading comment: $file"
-            COMMENT_BODY=$(cat "$file")
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -d "{\"body\": \"$COMMENT_BODY\"}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+          COMMENT_FILES_DIR="/tmp/comments"
+          for COMMENT_FILE in $(ls $COMMENT_FILES_DIR); do
+            COMMENT_BODY=$(cat "$COMMENT_FILES_DIR/$COMMENT_FILE")
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            if [ -z "$COMMENT_BODY" ]; then
+              echo "Error: COMMENT_BODY in $COMMENT_FILE is empty. Skipping comment posting."
+              continue
+            fi
+            echo "Posting comment: $COMMENT_BODY"
+            # 获取现有评论并删除
+            existing_comments=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments")
+            comment_id=$(echo "$existing_comments" | jq '.[0].id')
+            if [ "$comment_id" != "null" ]; then
+              curl -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+              echo "Deleted existing comment with ID $comment_id"
+            fi
+            # 发布新的评论
+            curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\": \"${COMMENT_BODY//\"/\\\"}\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
           done
