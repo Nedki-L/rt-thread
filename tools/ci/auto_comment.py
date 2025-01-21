@@ -29,7 +29,8 @@ def find_owners_for_file(files, maintainers):
     owners = {}
     for file in files:
         for maintainer in maintainers:
-            if re.match(f'^{maintainer["path"]}', file):
+            # 确保路径匹配：维护者路径是文件路径的前缀
+            if file.startswith(maintainer["path"].lstrip('/')):  # 去掉路径中的前导斜杠
                 tag = maintainer["tag"]
                 if tag not in owners:
                     owners[tag] = set()
@@ -83,6 +84,7 @@ for tag, owners_list in owners.items():
 
     if new_owners:
         comment_body = f"@{' @'.join(new_owners)}\nTag: {tag}\nPlease take a review of this tag\n"
+        comment_body = comment_body.replace("\n", "\\n")  # 转义换行符
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
