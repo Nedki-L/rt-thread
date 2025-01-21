@@ -46,7 +46,7 @@ if not owners:
     print("No matching owners found for the modified files.")
     exit(0)
 
-# 提取评论格式化的所有者名字（仅提取github id部分）
+# 提取评论格式化的所有者名字
 def extract_owner_name(owner):
     match = re.match(r'.*\(([^)]+)\).*', owner)
     return match.group(1).strip() if match else owner.strip()
@@ -84,7 +84,6 @@ all_mentioned_owners = set()
 # 用于追踪已处理的标签
 processed_tags = set()
 
-# 按顺序处理每个标签
 for tag, owners_list in owners.items():
     if tag in processed_tags:
         continue  # 如果该标签已处理过，跳过
