@@ -22,7 +22,8 @@ jobs:
     # Step 3: Install dependencies (if you have any)
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt  # 如果你有依赖的话（如requests等）
+        python -m pip install --upgrade pip
+        pip install requests
 
     # Step 4: Run the Python script to generate the comment
     - name: Generate comment
