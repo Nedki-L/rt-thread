@@ -27,12 +27,12 @@ except json.JSONDecodeError as e:
 def find_owners_for_file(files, maintainers):
     owners = {}
     for maintainer in maintainers:
-        # 只检查维护者路径是否与文件匹配
-        if any(file.startswith(maintainer['path']) for file in files):
-            # 如果匹配，将所有者添加到列表中
-            if maintainer['tag'] not in owners:
-                owners[maintainer['tag']] = []
-            owners[maintainer['tag']].extend(maintainer['owner'].split(','))
+        # 通过正则表达式检查文件路径是否匹配
+        for file in files:
+            if re.match(f'^{maintainer["path"]}', file):
+                if maintainer['tag'] not in owners:
+                    owners[maintainer['tag']] = []
+                owners[maintainer['tag']].extend(maintainer['owner'].split(','))
     return owners
 
 # 获取与修改文件匹配的所有者
@@ -43,12 +43,20 @@ if not owners:
     print("No matching owners found for the modified files.")
     exit(0)
 
+# 改进所有者信息提取
+def extract_owner_name(owner):
+    # 优化提取所有者的格式
+    match = re.match(r'.*\(([^)]+)\).*', owner)
+    if match:
+        return match.group(1).strip()
+    return owner.strip()  # 默认返回整个名字（如果没有符合的格式）
+
 # 生成评论内容
 comment = ""
 new_owners = set()
 for tag, owners_list in owners.items():
-    # 去除重复的所有者
-    owners_set = set(owner.split('(')[1].split(')')[0].strip() for owner in owners_list)
+    # 在生成评论时调用 extract_owner_name
+    owners_set = set(extract_owner_name(owner) for owner in owners_list)
     new_owners.update(owners_set)
 
     # 格式化评论
