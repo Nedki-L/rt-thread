@@ -31,6 +31,7 @@ jobs:
           | jq -r '.[].filename' | tr '\n' ',' | sed 's/,$//')  # 格式化文件列表
           echo "Modified files: $PR_FILES"
           echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
+          echo "PR_FILES environment variable set."
 
       - name: Load MAINTAINER.json and generate comment
         id: generate_comment
@@ -45,7 +46,9 @@ jobs:
             echo "Error: COMMENT_BODY is empty. Skipping comment posting."
             exit 1
           fi
+          echo "Posting comment: $COMMENT_BODY"  # 添加调试输出
           curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "{\"body\": \"$COMMENT_BODY\"}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+
