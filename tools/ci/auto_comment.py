@@ -25,12 +25,14 @@ except json.JSONDecodeError as e:
 
 # 定义匹配所有者的函数
 def find_owners_for_file(files, maintainers):
-    owners = []
+    owners = {}
     for maintainer in maintainers:
         # 只检查维护者路径是否与文件匹配
         if any(file.startswith(maintainer['path']) for file in files):
             # 如果匹配，将所有者添加到列表中
-            owners.extend(maintainer['owner'].split(','))
+            if maintainer['tag'] not in owners:
+                owners[maintainer['tag']] = []
+            owners[maintainer['tag']].extend(maintainer['owner'].split(','))
     return owners
 
 # 获取与修改文件匹配的所有者
@@ -43,23 +45,18 @@ if not owners:
 
 # 生成评论内容
 comment = ""
-for owner in owners:
-    # 获取GitHub用户名，假设格式为 owner_name (github_id)
-    try:
-        github_id = owner.split('(')[1].split(')')[0].strip()
-    except IndexError:
-        print(f"Warning: Malformed owner entry: {owner}")
-        continue
+new_owners = set()
+for tag, owners_list in owners.items():
+    # 去除重复的所有者
+    owners_set = set(owner.split('(')[1].split(')')[0].strip() for owner in owners_list)
+    new_owners.update(owners_set)
 
-    # 查找该所有者对应的tag
-    matching_maintainers = [maintainer for maintainer in maintainers_data if github_id in maintainer['owner']]
-    if matching_maintainers:
-        tag = matching_maintainers[0].get('tag', 'No tag')
+    # 格式化评论
+    if len(owners_set) > 1:
+        comment += f"@{' @'.join(owners_set)}\n"
     else:
-        tag = 'No tag'
-
-    # 构造评论
-    comment += f"@{github_id} Tag: {tag} Please take a review of this tag "
+        comment += f"@{next(iter(owners_set))}\n"
+    comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
 
 # 移除评论中的换行符和额外的空格
 comment = comment.replace('\n', ' ').strip()
@@ -67,6 +64,40 @@ comment = comment.replace('\n', ' ').strip()
 # 输出生成的评论
 print(f"Generated comment: {comment}")
 
-# 使用环境文件传递评论内容
-with open(os.getenv('GITHUB_ENV'), 'a') as env_file:
-    env_file.write(f"COMMENT_BODY={comment}\n")
+# 获取当前 PR 的评论
+pr_number = os.getenv("PR_NUMBER")
+response = requests.get(
+    f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
+    headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
+)
+
+# 获取现有评论的 ID 和内容
+existing_comments = response.json()
+existing_comment_body = ""
+existing_comment_id = None
+for comment_data in existing_comments:
+    if "CI Reviewer" in comment_data['body']:  # 假设评论包含特定标识
+        existing_comment_body = comment_data['body']
+        existing_comment_id = comment_data['id']
+        break
+
+# 逻辑判断：是否需要新增评论
+if existing_comment_body:
+    # 比较当前评论与已有评论的差异，决定是否更新或新增
+    existing_owners = set(word.strip('@') for word in existing_comment_body.split() if word.startswith('@'))
+    if not new_owners.issubset(existing_owners):
+        # 如果新维护者不是现有评论的一部分，新增评论
+        print("Adding new comment with new maintainers.")
+        requests.post(
+            f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
+            headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}", "Content-Type": "application/json"},
+            json={"body": comment}
+        )
+else:
+    # 如果没有找到现有评论，则添加新评论
+    print("Adding new comment.")
+    requests.post(
+        f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
+        headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}", "Content-Type": "application/json"},
+        json={"body": comment}
+    )
