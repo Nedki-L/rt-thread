@@ -50,7 +50,11 @@ def extract_owner_name(owner):
     return match.group(1).strip() if match else owner.strip()
 
 # 获取当前 PR 的所有评论
-pr_number = os.getenv("GITHUB_EVENT_PULL_REQUEST_NUMBER")
+pr_number = os.getenv("PR_NUMBER")  # 从环境变量获取 PR 编号
+if not pr_number:
+    print("Error: PR_NUMBER is not set.")
+    exit(1)
+
 response = requests.get(
     f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
     headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
@@ -58,6 +62,7 @@ response = requests.get(
 
 if response.status_code != 200:
     print(f"Error: Unable to fetch comments for PR #{pr_number}")
+    print(f"Response: {response.status_code}, {response.text}")
     exit(1)
 
 existing_comments = response.json()
