@@ -77,7 +77,7 @@ Your thorough review will help us ensure this tag is perfect and ready for use b
 """
 
     # 填充模板
-    comment += f"{reviewer_line}\n>\n{tag_line}\n>{review_focus}\n\n"
+    comment += f"{reviewer_line}\n{tag_line}\n{review_focus}\n\n"
 
 # 移除评论中的换行符和额外的空格
 comment = comment.strip()
