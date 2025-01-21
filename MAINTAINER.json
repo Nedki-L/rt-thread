@@ -2,16 +2,16 @@
   {
     "tag": "bsp-stm32",
     "path": "/bsp/stm32",
-    "owner": "reviewer1(kurisaW)<xxxx@xxx.email>;"
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>"
   },
   {
     "tag": "kernel",
     "path": "/kernel",
-    "owner": "reviewer1(kurisaW)<xxxx@xxx.email>, reviewer2(Nedki-L)<xxxx@xxx.email>;"
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>"
   },
   {
     "tag": "workflow",
     "path": "/workflow",
-    "owner": "reviewer1(kurisaW)<xxxx@xxx.email>, reviewer2(Nedki-L)<xxxx@xxx.email>, reviewer3(KurisaW-Collaborative)<xxxx@xxx.email>;"
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>, reviewer3(KurisaW-Collaborative)<reviewer3@example.com>"
   }
 ]
