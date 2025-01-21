@@ -62,10 +62,10 @@ for tag, owners_list in owners.items():
 
     # 格式化评论，符合要求的格式
     reviewer_line = f"**:technologist: Reviewer:** {' '.join([f'@{owner}' for owner in owners_set])}"
-    tag_line = f"**:label: Tag:** `{tag}`"
+    tag_line = f"**:label: Tag:** {tag}"
     review_focus = """
 **:zap: Review Focus:**
-The `{tag}` tag is ready for your review! Please pay close attention to the following aspects:
+The {tag} tag is ready for your review! Please pay close attention to the following aspects:
 - **:dizzy: Logical Flow:** Ensure that the workflow follows a logical sequence that makes sense to users.
 - **:mag: Optimizations:** Identify any opportunities to streamline the process for better efficiency.
 - **:monocle_face: Test Coverage:** Check if the workflow addresses all possible edge cases.
