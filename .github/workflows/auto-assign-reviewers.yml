@@ -52,6 +52,16 @@ jobs:
               continue
             fi
             echo "Posting comment: $COMMENT_BODY"
+            # 获取现有评论并删除
+            existing_comments=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments")
+            comment_id=$(echo "$existing_comments" | jq '.[0].id')
+            if [ "$comment_id" != "null" ]; then
+              curl -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+              echo "Deleted existing comment with ID $comment_id"
+            fi
+            # 发布新的评论
             curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d "{\"body\": \"${COMMENT_BODY//\"/\\\"}\"}" \

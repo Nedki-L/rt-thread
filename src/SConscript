@@ -10,7 +10,7 @@ if GetDepend('RT_USING_SMALL_MEM') == False:
 
 if GetDepend('RT_USING_SLAB') == False:
     SrcRemove(src, ['slab.c'])
-
+hjkhjkh
 if GetDepend('RT_USING_MEMPOOL') == False:
     SrcRemove(src, ['mempool.c'])
 
