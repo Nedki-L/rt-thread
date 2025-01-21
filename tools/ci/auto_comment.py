@@ -71,15 +71,19 @@ response = requests.get(
     headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
 )
 
+# 打印API返回的数据，以便调试
+print("Response from GitHub API:", response.json())
+
 # 获取现有评论的 ID 和内容
 existing_comments = response.json()
 existing_comment_body = ""
 existing_comment_id = None
 for comment_data in existing_comments:
-    if "CI Reviewer" in comment_data['body']:  # 假设评论包含特定标识
-        existing_comment_body = comment_data['body']
-        existing_comment_id = comment_data['id']
-        break
+    if isinstance(comment_data, dict) and 'body' in comment_data:  # 检查是否为字典并包含body字段
+        if "CI Reviewer" in comment_data['body']:  # 假设评论包含特定标识
+            existing_comment_body = comment_data['body']
+            existing_comment_id = comment_data['id']
+            break
 
 # 逻辑判断：是否需要新增评论
 if existing_comment_body:
