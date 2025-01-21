@@ -84,9 +84,6 @@ all_mentioned_owners = set()
 # 用于追踪已处理的标签
 processed_tags = set()
 
-# 临时字典存储每个tag对应的维护者
-tag_owners_map = {}
-
 for tag, owners_list in owners.items():
     if tag in processed_tags:
         continue  # 如果该标签已处理过，跳过
@@ -98,18 +95,11 @@ for tag, owners_list in owners.items():
     # 更新全局的已提及维护者集合
     all_mentioned_owners.update(new_owners)
 
-    # 保存tag对应的维护者
-    tag_owners_map[tag] = new_owners
-
-    # 标记该标签已处理
-    processed_tags.add(tag)
-
-# 生成评论时，确保每个维护者前面加上 `@` 符号
-current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-
-# 逐个tag生成评论
-for tag, new_owners in tag_owners_map.items():
+    # 生成评论时，确保每个维护者前面加上 `@` 符号
     if new_owners:
+        # 获取当前时间戳
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
         # 创建评论内容
         comment_body = f"Timeout: {current_time}\n"
         comment_body += f"Reviewer: {' @'.join(sorted(all_mentioned_owners))}\n"  # 确保每个维护者加上 @
@@ -122,5 +112,8 @@ for tag, new_owners in tag_owners_map.items():
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
+
+        # 标记该标签已处理
+        processed_tags.add(tag)
 
 print(f"Comments generated in: {comments_dir}")
