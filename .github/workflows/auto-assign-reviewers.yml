@@ -45,17 +45,14 @@ jobs:
       - name: Get COMMENT_BODY from file
         run: |
           COMMENT_BODY=$(cat /tmp/comment_body.txt)
-          DECODED_COMMENT=$(echo "$COMMENT_BODY" | base64 --decode)  # 解码
-          echo "COMMENT_BODY=${DECODED_COMMENT}" >> $GITHUB_ENV
-
-      - name: Post comment to PR
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ env.COMMENT_BODY }}"
           if [ -z "$COMMENT_BODY" ]; then
             echo "Error: COMMENT_BODY is empty. Skipping comment posting."
             exit 1
           fi
+
+      - name: Post comment to PR
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
           echo "Posting comment: $COMMENT_BODY"
           curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
