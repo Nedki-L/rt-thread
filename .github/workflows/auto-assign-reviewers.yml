@@ -32,7 +32,12 @@ jobs:
           echo "Modified files: $PR_FILES"
           echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
-      - name: Load MAINTAINER.json and generate comments
+      - name: Generate comments
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }} # 传递正确的 PR 编号
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_FILES: ${{ env.PR_FILES }}
         run: |
           python3 tools/ci/auto_comment.py
 
