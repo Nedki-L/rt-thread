@@ -5,15 +5,39 @@ import re
 import time
 
 # 获取环境变量
-pr_files = os.getenv("PR_FILES", "").split(",")
-maintainers_file = './MAINTAINER.json'
+pr_number = os.getenv("PR_NUMBER")  # 从环境变量获取 PR 编号
+github_repo = os.getenv("GITHUB_REPOSITORY")
+token = os.getenv("GITHUB_TOKEN")
 
-# 错误处理：如果没有文件列表，则提前退出
-if not pr_files or pr_files == ['']:
-    print("No modified files found, exiting.")
-    exit(0)
+if not pr_number or not github_repo or not token:
+    print("Error: PR_NUMBER, GITHUB_REPOSITORY or GITHUB_TOKEN is not set.")
+    exit(1)
+
+# 获取PR修改的所有文件
+def get_modified_files(pr_number, github_repo, token):
+    url = f"https://api.github.com/repos/{github_repo}/pulls/{pr_number}/files"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    modified_files = []
+    page = 1
+    while True:
+        response = requests.get(url, headers=headers, params={"page": page, "per_page": 100})
+        if response.status_code != 200:
+            print(f"Error: Unable to fetch modified files for PR #{pr_number}")
+            print(f"Response: {response.status_code}, {response.text}")
+            exit(1)
+        
+        files = response.json()
+        if not files:
+            break
+        
+        modified_files.extend([file['filename'] for file in files])
+        page += 1
+        
+    return modified_files
 
 # 加载 MAINTAINER.json 文件
+maintainers_file = './MAINTAINER.json'
 try:
     with open(maintainers_file, 'r') as file:
         maintainers_data = json.load(file)
@@ -38,8 +62,16 @@ def find_owners_for_file(files, maintainers):
                 owners[tag].update(maintainer['owner'].split(','))
     return owners
 
+# 获取修改文件
+modified_files = get_modified_files(pr_number, github_repo, token)
+
+# 如果没有修改文件，则退出
+if not modified_files:
+    print("No modified files found in the PR.")
+    exit(0)
+
 # 获取与修改文件匹配的所有者
-owners = find_owners_for_file(pr_files, maintainers_data)
+owners = find_owners_for_file(modified_files, maintainers_data)
 
 # 如果没有找到所有者，退出并打印信息
 if not owners:
@@ -52,22 +84,22 @@ def extract_owner_name(owner):
     return match.group(1).strip() if match else owner.strip()
 
 # 获取当前 PR 的所有评论
-pr_number = os.getenv("PR_NUMBER")  # 从环境变量获取 PR 编号
-if not pr_number:
-    print("Error: PR_NUMBER is not set.")
-    exit(1)
+def get_existing_comments(pr_number, github_repo, token):
+    response = requests.get(
+        f"https://api.github.com/repos/{github_repo}/issues/{pr_number}/comments",
+        headers={"Authorization": f"Bearer {token}"}
+    )
 
-response = requests.get(
-    f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/issues/{pr_number}/comments",
-    headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
-)
+    if response.status_code != 200:
+        print(f"Error: Unable to fetch comments for PR #{pr_number}")
+        print(f"Response: {response.status_code}, {response.text}")
+        exit(1)
 
-if response.status_code != 200:
-    print(f"Error: Unable to fetch comments for PR #{pr_number}")
-    print(f"Response: {response.status_code}, {response.text}")
-    exit(1)
+    return response.json()
 
-existing_comments = response.json()
+existing_comments = get_existing_comments(pr_number, github_repo, token)
+
+# 提取现有评论中的维护者
 mentioned_owners = set()
 for comment_data in existing_comments:
     if 'body' in comment_data:
