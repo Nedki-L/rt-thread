@@ -2,6 +2,7 @@ import json
 import os
 import requests
 import re
+import base64
 
 # 获取环境变量
 pr_files = os.getenv("PR_FILES", "").splitlines()
@@ -89,10 +90,11 @@ if not comment:
     print("No comment generated. Exiting.")
     exit(1)
 
-# 将评论内容保存到一个文本文件，避免环境变量问题
+# 确保 COMMENT_BODY 被正确传递到环境变量
 comment_file = '/tmp/comment_body.txt'
+encoded_comment = base64.b64encode(comment.encode('utf-8')).decode('utf-8')  # 编码为 base64
 with open(comment_file, 'w') as f:
-    f.write(comment)
+    f.write(encoded_comment)
 
 print(f"Comment written to: {comment_file}")
 
