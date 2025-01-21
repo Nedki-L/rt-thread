@@ -89,7 +89,7 @@ if not comment:
     print("No comment generated. Exiting.")
     exit(1)
 
-# 将评论写入文件
+# 将评论内容保存到一个文本文件，避免环境变量问题
 comment_file = '/tmp/comment_body.txt'
 with open(comment_file, 'w') as f:
     f.write(comment)
