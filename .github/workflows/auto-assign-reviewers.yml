@@ -32,30 +32,23 @@ jobs:
           echo "Modified files: $PR_FILES"
           echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
-      - name: Load MAINTAINER.json and generate comment
-        id: generate_comment
+      - name: Load MAINTAINER.json and generate comments
         run: |
           python3 tools/ci/auto_comment.py
 
-      - name: Get COMMENT_BODY from file
+      - name: Post comments to PR
         run: |
-          COMMENT_BODY=$(cat /tmp/comment_body.txt)
-          echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
-
-      - name: Check COMMENT_BODY value
-        run: |
-          echo "COMMENT_BODY=${{ env.COMMENT_BODY }}"
-
-      - name: Post comment to PR
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ env.COMMENT_BODY }}"
-          if [ -z "$COMMENT_BODY" ]; then
-            echo "Error: COMMENT_BODY is empty. Skipping comment posting."
-            exit 1
-          fi
-          echo "Posting comment: $COMMENT_BODY"
-          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"body\": \"$COMMENT_BODY\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+          COMMENT_FILES_DIR="/tmp/comments"
+          for COMMENT_FILE in $(ls $COMMENT_FILES_DIR); do
+            COMMENT_BODY=$(cat "$COMMENT_FILES_DIR/$COMMENT_FILE")
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            if [ -z "$COMMENT_BODY" ]; then
+              echo "Error: COMMENT_BODY in $COMMENT_FILE is empty. Skipping comment posting."
+              continue
+            fi
+            echo "Posting comment: $COMMENT_BODY"
+            curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\": \"$COMMENT_BODY\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+          done
