@@ -42,9 +42,11 @@ jobs:
           COMMENT_BODY=$(cat /tmp/comment_body.txt)
           echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
 
-      - name: Check COMMENT_BODY value
+      - name: Get COMMENT_BODY from file
         run: |
-          echo "COMMENT_BODY=${{ env.COMMENT_BODY }}"
+          COMMENT_BODY=$(cat /tmp/comment_body.txt)
+          DECODED_COMMENT=$(echo "$COMMENT_BODY" | base64 --decode)  # 解码
+          echo "COMMENT_BODY=${DECODED_COMMENT}" >> $GITHUB_ENV
 
       - name: Post comment to PR
         run: |
