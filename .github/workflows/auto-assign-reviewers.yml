@@ -16,7 +16,7 @@ jobs:
         run: |
           echo "Fetching modified files for the PR..."
           git fetch origin +refs/pull/${{ github.event.pull_request.number }}/merge
-          modified_files=$(git diff --name-only origin/main...HEAD)
+          modified_files=$(git diff --name-only origin/master...HEAD)
           echo "Modified files: $modified_files"
           echo "::set-output name=modified_files::${modified_files}"
 
