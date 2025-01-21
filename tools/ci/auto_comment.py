@@ -59,30 +59,15 @@ for tag, owners_list in owners.items():
     owners_set = set(extract_owner_name(owner) for owner in owners_list)
     new_owners.update(owners_set)
 
-    # 格式化评论，符合要求的格式
-    reviewer_line = f"Reviewer: {' '.join([f'@{owner}' for owner in owners_set])}"
-    tag_line = f"Tag: {tag}"
-    review_focus = """
-Review Focus:
-The {tag} tag is ready for your review! Please pay close attention to the following aspects:
-- Logical Flow: Ensure that the workflow follows a logical sequence that makes sense to users.
-- Optimizations: Identify any opportunities to streamline the process for better efficiency.
-- Test Coverage: Check if the workflow addresses all possible edge cases.
-
-Collaboration: Your review will significantly improve this workflow. Your feedback is crucial to ensure it’s as smooth and reliable as possible!
-
-Your Insight:
-Your thorough review will help us ensure this tag is perfect and ready for use by the team. Every suggestion you make will have a big impact on improving the overall workflow.
-"""
-
-    # 替换 `{tag}` 为实际 tag 值
-    review_focus = review_focus.replace("{tag}", tag)
-
-    # 填充模板
-    comment += f"{reviewer_line}\n{tag_line}\n{review_focus}\n\n"
+    # 格式化评论
+    if len(owners_set) > 1:
+        comment += f"@{' @'.join(owners_set)}\n"
+    else:
+        comment += f"@{next(iter(owners_set))}\n"
+    comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
 
 # 移除评论中的换行符和额外的空格
-comment = comment.strip()
+comment = comment.replace('\n', ' ').strip()
 
 # 打印生成的评论内容，调试输出
 print(f"Generated comment: {comment}")
@@ -92,7 +77,7 @@ if not comment:
     print("No comment generated. Exiting.")
     exit(1)
 
-# 将评论写入文件
+# 确保 COMMENT_BODY 被正确传递到环境变量
 comment_file = '/tmp/comment_body.txt'
 with open(comment_file, 'w') as f:
     f.write(comment)
