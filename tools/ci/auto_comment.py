@@ -78,16 +78,21 @@ for comment_data in existing_comments:
 comments_dir = "/tmp/comments"
 os.makedirs(comments_dir, exist_ok=True)
 
+final_owners = set()
 for tag, owners_list in owners.items():
     owners_set = {extract_owner_name(owner) for owner in owners_list}
     new_owners = owners_set - mentioned_owners
 
-    if new_owners:
-        comment_body = f"@{' @'.join(new_owners)}\nTag: {tag}\nPlease take a review of this tag\n"
-        comment_body = comment_body.replace("\n", "\\n")  # 转义换行符
-        comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}.txt"
-        with open(comment_file_path, 'w') as f:
-            f.write(comment_body)
-        mentioned_owners.update(new_owners)
+    final_owners.update(new_owners)
+
+if final_owners:
+    comment_body = f"Reviewer: {' @'.join(sorted(final_owners))}\n"
+    for tag, owners_list in owners.items():
+        comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
+    
+    comment_body = comment_body.replace("\n", "\\n")  # 转义换行符
+    comment_file_path = f"{comments_dir}/reviewer_comment.txt"
+    with open(comment_file_path, 'w') as f:
+        f.write(comment_body)
 
 print(f"Comments generated in: {comments_dir}")
