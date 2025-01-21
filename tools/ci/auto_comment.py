@@ -98,6 +98,9 @@ if final_owners:
         comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
         comment_body += f"------------------------------------------------------------------------\n"
         
+        # 转义换行符和双引号
+        comment_body = comment_body.replace('\n', '\\n').replace('"', '\\"')
+
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
