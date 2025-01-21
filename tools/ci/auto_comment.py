@@ -90,10 +90,10 @@ for tag, owners_list in owners.items():
 
     # 提取当前标签的所有者，并去除已提及的维护者
     owners_set = {extract_owner_name(owner) for owner in owners_list}
-    new_owners = owners_set - mentioned_owners
+    # new_owners = owners_set - mentioned_owners
 
     # 更新全局的已提及维护者集合
-    all_mentioned_owners.update(new_owners)
+    all_mentioned_owners.update(owners_set)
 
     # 生成评论时，确保每个维护者前面加上 `@` 符号
     if new_owners:
