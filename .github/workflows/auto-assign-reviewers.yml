@@ -28,7 +28,7 @@ jobs:
           echo "Fetching modified files for the PR..."
           PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
           "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-          | jq -r '.[].filename')
+          | jq -r '.[].filename' | tr '\n' ',' | sed 's/,$//')  # 格式化文件列表
           echo "Modified files: $PR_FILES"
           echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
