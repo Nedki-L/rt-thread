@@ -61,18 +61,18 @@ for tag, owners_list in owners.items():
     new_owners.update(owners_set)
 
     # 格式化评论，符合要求的格式
-    reviewer_line = f"**👨‍⚖️ Reviewer:** {' '.join([f'@{owner}' for owner in owners_set])}"
-    tag_line = f"**🌟 Tag:** `{tag}`"
+    reviewer_line = f"**:technologist: Reviewer:** {' '.join([f'@{owner}' for owner in owners_set])}"
+    tag_line = f"**:label: Tag:** `{tag}`"
     review_focus = """
-**⚡ Review Focus:**
+**:zap: Review Focus:**
 The `{tag}` tag is ready for your review! Please pay close attention to the following aspects:
-- **🔄 Logical Flow:** Ensure that the workflow follows a logical sequence that makes sense to users.
-- **⚙️ Optimizations:** Identify any opportunities to streamline the process for better efficiency.
-- **✅ Test Coverage:** Check if the workflow addresses all possible edge cases.
+- **:dizzy: Logical Flow:** Ensure that the workflow follows a logical sequence that makes sense to users.
+- **:mag: Optimizations:** Identify any opportunities to streamline the process for better efficiency.
+- **:monocle_face: Test Coverage:** Check if the workflow addresses all possible edge cases.
 
-**💬 Collaboration:** Your review will significantly improve this workflow. Your feedback is crucial to ensure it’s as smooth and reliable as possible!
+**:speech_balloon: Collaboration:** Your review will significantly improve this workflow. Your feedback is crucial to ensure it’s as smooth and reliable as possible!
 
-**🗝️ Your Insight:**
+**:memo: Your Insight:**
 Your thorough review will help us ensure this tag is perfect and ready for use by the team. Every suggestion you make will have a big impact on improving the overall workflow.
 """
 
