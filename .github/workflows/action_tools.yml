@@ -8,7 +8,7 @@ on:
     - cron:  '0 16 1 * *'
   push:
     branches:
-      - master
+      - masterdsa
     paths-ignore:
       - documentation/**
       - '**/README.md'
