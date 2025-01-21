@@ -13,7 +13,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v3
         with:
           python-version: '3.9'
 
@@ -22,41 +22,120 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Get PR modified files
-        id: pr_files
-        run: |
-          echo "Fetching modified files for the PR..."
-          PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-          | jq -r '.[].filename' | tr '\n' ',' | sed 's/,$//')  # 格式化文件列表
-          echo "Modified files: $PR_FILES"
-          echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
-
-      - name: Load MAINTAINER.json and generate comment
+      - name: Load Maintainer and Generate Comment
         id: generate_comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 tools/ci/auto_comment.py
+          import json
+          import os
+          import re
+          import requests
 
-      - name: Get COMMENT_BODY from file
-        run: |
-          COMMENT_BODY=$(cat /tmp/comment_body.txt)
-          echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
+          # 获取 PR 文件列表
+          pr_files_response = requests.get(
+              f"https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files",
+              headers={"Authorization": f"Bearer ${{ secrets.GITHUB_TOKEN }}"}
+          )
+          if pr_files_response.status_code != 200:
+              print("Failed to fetch PR files")
+              exit(1)
 
-      - name: Get COMMENT_BODY from file
-        run: |
-          COMMENT_BODY=$(cat /tmp/comment_body.txt)
-          echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
+          pr_files = [file['filename'] for file in pr_files_response.json()]
+          if not pr_files:
+              print("No modified files found, exiting.")
+              exit(0)
 
-      - name: Post comment to PR
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ env.COMMENT_BODY }}"
-          if [ -z "$COMMENT_BODY" ]; then
-            echo "Error: COMMENT_BODY is empty. Skipping comment posting."
-            exit 1
-          fi
-          echo "Posting comment: $COMMENT_BODY"
-          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"body\": \"$COMMENT_BODY\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+          # 加载 MAINTAINER.json
+          try:
+              with open('./MAINTAINER.json', 'r') as f:
+                  maintainers_data = json.load(f)
+          except FileNotFoundError:
+              print("Error: MAINTAINER.json not found!")
+              exit(1)
+          except json.JSONDecodeError as e:
+              print(f"Error: Failed to decode MAINTAINER.json, invalid JSON!")
+              print(f"Details: {e}")
+              exit(1)
+
+          # 匹配所有者
+          def find_owners_for_file(files, maintainers):
+              owners = {}
+              for maintainer in maintainers:
+                  for file in files:
+                      if re.match(f'^{maintainer["path"]}', file):
+                          if maintainer['tag'] not in owners:
+                              owners[maintainer['tag']] = []
+                          owners[maintainer['tag']].extend(maintainer['owner'].split(','))
+              return owners
+
+          owners = find_owners_for_file(pr_files, maintainers_data)
+
+          if not owners:
+              print("No matching owners found for the modified files.")
+              exit(0)
+
+          # 提取所有者名字
+          def extract_owner_name(owner):
+              match = re.match(r'.*\(([^)]+)\).*', owner)
+              return match.group(1).strip() if match else owner.strip()
+
+          comment = ""
+          new_owners = set()
+          for tag, owners_list in owners.items():
+              owners_set = set(extract_owner_name(owner) for owner in owners_list)
+              new_owners.update(owners_set)
+
+              reviewer_line = f"Reviewer: {' '.join([f'@{owner}' for owner in owners_set])}"
+              tag_line = f"Tag: {tag}"
+              review_focus = f"""
+              Review Focus:
+              The {tag} tag is ready for your review! Please pay close attention to the following aspects:
+              - Logical Flow: Ensure the workflow makes sense.
+              - Optimizations: Look for opportunities to streamline the process.
+              - Test Coverage: Check if all edge cases are addressed.
+              """
+              comment += f"{reviewer_line}\n{tag_line}\n{review_focus}\n\n"
+
+          comment = comment.strip()
+
+          if not comment:
+              print("No comment generated. Exiting.")
+              exit(1)
+
+          # 检查现有评论
+          pr_number = ${{ github.event.pull_request.number }}
+          comments_response = requests.get(
+              f"https://api.github.com/repos/${{ github.repository }}/issues/{pr_number}/comments",
+              headers={"Authorization": f"Bearer ${{ secrets.GITHUB_TOKEN }}"}
+          )
+          if comments_response.status_code != 200:
+              print("Failed to fetch existing comments")
+              exit(1)
+
+          existing_comments = comments_response.json()
+          existing_comment_id = None
+          for comment_data in existing_comments:
+              if "CI Reviewer" in comment_data.get('body', ''):
+                  existing_comment_id = comment_data['id']
+                  break
+
+          # 如果有现有评论，则更新；否则添加新评论
+          headers = {
+              "Authorization": f"Bearer ${{ secrets.GITHUB_TOKEN }}",
+              "Content-Type": "application/json"
+          }
+          if existing_comment_id:
+              print("Updating existing comment")
+              requests.patch(
+                  f"https://api.github.com/repos/${{ github.repository }}/issues/comments/{existing_comment_id}",
+                  headers=headers,
+                  json={"body": comment}
+              )
+          else:
+              print("Posting new comment")
+              requests.post(
+                  f"https://api.github.com/repos/${{ github.repository }}/issues/{pr_number}/comments",
+                  headers=headers,
+                  json={"body": comment}
+              )
