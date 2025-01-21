@@ -1,22 +1,17 @@
 [
     {
-        "tag": "stm32l496-st-nucleo",
-        "path": "bsp/stm32/stm32l496-st-nucleo", 
+        "tag": "BSP: stm32",
+        "path": "/bsp/stm32/", 
         "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>"
     },
     {
-        "tag": "stm32/*",
-        "path": "bsp/stm32",
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
-    },
-    {
         "tag": "kernel: memory",
-        "path": "src/*",
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>, kkk (Nedki-L) <2053731441@qq.com>"
+        "path": "/src/",
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
     },
     {
         "tag": "workflow",
-        "path": ".github/workflows",
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
+        "path": "/.github/workflows/",
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>, kkk (Nedki-L) <2053731441@qq.com>"
     }
 ]
