@@ -61,8 +61,16 @@ for tag, owners_list in owners.items():
 # 移除评论中的换行符和额外的空格
 comment = comment.replace('\n', ' ').strip()
 
-# 输出生成的评论
+# 打印生成的评论内容，调试输出
 print(f"Generated comment: {comment}")
+
+# 确保 COMMENT_BODY 被正确传递到环境变量
+os.environ["COMMENT_BODY"] = comment
+
+# 如果没有生成评论内容，退出并打印信息
+if not comment:
+    print("No comment generated. Exiting.")
+    exit(1)
 
 # 获取当前 PR 的评论
 pr_number = os.getenv("PR_NUMBER")
