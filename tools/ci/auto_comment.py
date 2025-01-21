@@ -93,12 +93,12 @@ if final_owners:
     # 分离不同的tag评论并附加时间戳
     for tag, owners_list in owners.items():
         comment_body += f"Timeout: {current_time}\n"
-        comment_body += f"Reviewer: {'@'.join(sorted(final_owners))} \n"
+        comment_body += f"Reviewer: {' @'.join(sorted(final_owners))}\n"
         comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
-
+        
         # 转义换行符和双引号
         comment_body = comment_body.replace('\n', '\\n').replace('"', '\\"')
-        
+
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
