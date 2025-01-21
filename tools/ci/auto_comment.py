@@ -59,9 +59,10 @@ for owner in owners:
         tag = 'No tag'
 
     # 构造评论
-    comment += f"@{github_id}\n"
-    comment += f"Tag: {tag}\n"
-    comment += f"Please take a review of this tag\n\n"
+    comment += f"@{github_id} Tag: {tag} Please take a review of this tag "
+
+# 移除评论中的换行符和额外的空格
+comment = comment.replace('\n', ' ').strip()
 
 # 输出生成的评论
 print(f"Generated comment: {comment}")
