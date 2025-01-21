@@ -1,10 +1,10 @@
 import json
 import os
 import requests
-import re  # 导入 re 模块
+import re
 
 # 获取环境变量
-pr_files = os.getenv("PR_FILES", "").splitlines()  # 使用 splitlines() 处理文件列表
+pr_files = os.getenv("PR_FILES", "").splitlines()
 maintainers_file = './MAINTAINER.json'
 
 # 错误处理：如果没有文件列表，则提前退出
@@ -30,7 +30,7 @@ def find_owners_for_file(files, maintainers):
     for maintainer in maintainers:
         # 通过正则表达式检查文件路径是否匹配
         for file in files:
-            if re.match(f'^{maintainer["path"]}', file):  # 使用正则表达式匹配路径
+            if re.match(f'^{maintainer["path"]}', file):
                 if maintainer['tag'] not in owners:
                     owners[maintainer['tag']] = []
                 owners[maintainer['tag']].extend(maintainer['owner'].split(','))
@@ -53,37 +53,36 @@ def extract_owner_name(owner):
     return owner.strip()  # 默认返回整个名字（如果没有符合的格式）
 
 # 生成评论内容
-def generate_comment(owners):
-    comment = ""
-    new_owners = set()
-    for tag, owners_list in owners.items():
-        owners_set = set(extract_owner_name(owner) for owner in owners_list)
-        new_owners.update(owners_set)
+comment = ""
+new_owners = set()
+for tag, owners_list in owners.items():
+    owners_set = set(extract_owner_name(owner) for owner in owners_list)
+    new_owners.update(owners_set)
 
-        # 格式化评论
-        if len(owners_set) > 1:
-            comment += f"@{' @'.join(owners_set)}\n"
-        else:
-            comment += f"@{next(iter(owners_set))}\n"
-        comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
+    # 格式化评论
+    if len(owners_set) > 1:
+        comment += f"@{' @'.join(owners_set)}\n"
+    else:
+        comment += f"@{next(iter(owners_set))}\n"
+    comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
 
-    # 移除评论中的换行符和额外的空格
-    print(f"Generated comment before cleaning: {comment}")  # 调试输出
-    return comment.replace('\n', ' ').strip()
-
-# 生成评论并设置环境变量
-comment = generate_comment(owners)
+# 移除评论中的换行符和额外的空格
+comment = comment.replace('\n', ' ').strip()
 
 # 打印生成的评论内容，调试输出
 print(f"Generated comment: {comment}")
-
-# 确保 COMMENT_BODY 被正确传递到环境变量
-os.environ["COMMENT_BODY"] = comment
 
 # 如果没有生成评论内容，退出并打印信息
 if not comment:
     print("No comment generated. Exiting.")
     exit(1)
+
+# 确保 COMMENT_BODY 被正确传递到环境变量
+comment_file = '/tmp/comment_body.txt'
+with open(comment_file, 'w') as f:
+    f.write(comment)
+
+print(f"Comment written to: {comment_file}")
 
 # 获取当前 PR 的评论
 pr_number = os.getenv("PR_NUMBER")
