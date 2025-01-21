@@ -1,15 +1,22 @@
-{
-    "tag": "stm32l496-st-nucleo",
-    "path": "/bsp/stm32/stm32l496-st-nucleo", 
-    "owner": "Li Tao (supperthomas) <xxx@xxx.com>, Zhang Bingru (Rbb) <xxx@xxx.com>"
-},
-{
-    "tag": "stm32",
-    "path": "/bsp/stm32/",
-    "owner": "Li Tao (supperthomas) <xxx@xxx.com>, Zhang Bingru (Rbb) <xxx@xxx.com"
-},
-{
-    "tag": "kernel: memory",
-    "path": "/kernel/",
-    "owner": "Li Tao (supperthomas) <xxx@xxx.com>, Zhang Bingru (Rbb) <xxx@xxx.com"
-}
+[
+    {
+        "tag": "stm32l496-st-nucleo",
+        "path": "bsp/stm32/stm32l496-st-nucleo", 
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>"
+    },
+    {
+        "tag": "stm32/*",
+        "path": "bsp/stm32",
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
+    },
+    {
+        "tag": "kernel: memory",
+        "path": "src/*",
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>, kkk (Nedki-L) <2053731441@qq.com>"
+    },
+    {
+        "tag": "workflow",
+        "path": ".github/workflows",
+        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
+    }
+]
