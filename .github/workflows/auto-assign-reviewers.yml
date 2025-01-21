@@ -1,60 +1,63 @@
-name: PR Review Automation
+name: Auto Reviewer Based on MAINTAINER.json
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  generate-comment:
+  auto-comment:
     runs-on: ubuntu-latest
 
     steps:
-    # Step 1: Checkout the code
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    # Step 2: Set up Python
-    - name: Set up Python
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
 
-    # Step 3: Install dependencies (if you have any)
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-    # Step 4: Run the Python script to generate the comment
-    - name: Generate comment
-      run: |
-        python tools/ci/auto_comment.py  # 调用生成评论的 Python 脚本
+      - name: Get PR modified files
+        id: pr_files
+        run: |
+          echo "Fetching modified files for the PR..."
+          PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+          | jq -r '.[].filename' | tr '\n' ',' | sed 's/,$//')  # 格式化文件列表
+          echo "Modified files: $PR_FILES"
+          echo "PR_FILES=$PR_FILES" >> $GITHUB_ENV
 
-    # Step 5: Upload the comment file as artifact
-    - name: Upload comment file
-      uses: actions/upload-artifact@v3
-      with:
-        name: comment-file
-        path: /tmp/comment_body.txt
+      - name: Load MAINTAINER.json and generate comment
+        id: generate_comment
+        run: |
+          python3 tools/ci/auto_comment.py
 
-  post-comment:
-    runs-on: ubuntu-latest
-    needs: generate-comment
-    steps:
-    # Step 1: Checkout code
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Get COMMENT_BODY from file
+        run: |
+          COMMENT_BODY=$(cat /tmp/comment_body.txt)
+          echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
 
-    # Step 2: Download the comment file from previous job
-    - name: Download comment file
-      uses: actions/download-artifact@v3
-      with:
-        name: comment-file
+      - name: Get COMMENT_BODY from file
+        run: |
+          COMMENT_BODY=$(cat /tmp/comment_body.txt)
+          DECODED_COMMENT=$(echo "$COMMENT_BODY" | base64 --decode)  # 解码
+          echo "COMMENT_BODY=${DECODED_COMMENT}" >> $GITHUB_ENV
 
-    # Step 3: Post the comment to GitHub
-    - name: Post comment to GitHub PR
-      run: |
-        COMMENT_BODY=$(cat comment-file/comment_body.txt)
-        curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-             -d '{"body": "'"${COMMENT_BODY}"'"}' \
-             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+      - name: Post comment to PR
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          COMMENT_BODY="${{ env.COMMENT_BODY }}"
+          if [ -z "$COMMENT_BODY" ]; then
+            echo "Error: COMMENT_BODY is empty. Skipping comment posting."
+            exit 1
+          fi
+          echo "Posting comment: $COMMENT_BODY"
+          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\": \"$COMMENT_BODY\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
