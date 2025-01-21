@@ -29,7 +29,8 @@ def find_owners_for_file(files, maintainers):
     owners = {}
     for file in files:
         for maintainer in maintainers:
-            if re.match(f'^{maintainer["path"]}', file):
+            # 确保路径匹配：维护者路径是文件路径的前缀
+            if file.startswith(maintainer["path"].lstrip('/')):  # 去掉路径中的前导斜杠
                 tag = maintainer["tag"]
                 if tag not in owners:
                     owners[tag] = set()
