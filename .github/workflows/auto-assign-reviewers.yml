@@ -61,9 +61,11 @@ jobs:
                 "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
               echo "Deleted existing comment with ID $comment_id"
             fi
+            # 转义换行符和双引号
+            COMMENT_BODY_ESCAPED=$(echo "$COMMENT_BODY" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
             # 发布新的评论
             curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/json" \
-              -d "{\"body\": \"${COMMENT_BODY//\"/\\\"}\"}" \
+              -d "{\"body\": \"${COMMENT_BODY_ESCAPED}\"}" \
               "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
           done
