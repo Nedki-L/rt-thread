@@ -96,7 +96,7 @@ for tag, owners_list in owners.items():
     all_mentioned_owners.update(owners_set)
 
     # 生成评论时，确保每个维护者前面加上 `@` 符号
-    if new_owners:
+    if owners_set:
         # 获取当前时间戳
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
