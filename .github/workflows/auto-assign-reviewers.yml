@@ -15,8 +15,17 @@ jobs:
         id: fetch_files
         run: |
           echo "Fetching modified files for the PR..."
+
+          # Fetch the PR and the commit range
           git fetch origin +refs/pull/${{ github.event.pull_request.number }}/merge
-          modified_files=$(git diff --name-only origin/master...HEAD)
+
+          # Get the first commit of the PR
+          first_commit_sha=$(git log --reverse --format=%H -n 1 origin/${{ github.event.pull_request.base.ref }}..HEAD)
+
+          # Get the modified files for the PR (if the PR only has one commit, it will be the same as first_commit_sha)
+          modified_files=$(git diff --name-only $first_commit_sha^..$first_commit_sha)
+
+          # Output the modified files
           echo "Modified files: $modified_files"
           echo "::set-output name=modified_files::${modified_files}"
 
