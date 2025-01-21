@@ -34,8 +34,9 @@ def find_owners_for_file(files, maintainers):
             if file.startswith(maintainer["path"].lstrip('/')):  # 去掉路径中的前导斜杠
                 tag = maintainer["tag"]
                 if tag not in owners:
-                    owners[tag] = set()
-                owners[tag].update(maintainer['owner'].split(','))
+                    owners[tag] = []
+                # 保留按原始顺序的维护者列表
+                owners[tag].extend(maintainer['owner'].split(','))
     return owners
 
 # 获取与修改文件匹配的所有者
@@ -91,13 +92,13 @@ for tag, owners_list in owners.items():
 
     # 提取当前标签的所有者，并去除已提及的维护者
     owners_set = {extract_owner_name(owner) for owner in owners_list}
-    new_owners = owners_set - mentioned_owners
+    new_owners = [owner for owner in owners_list if extract_owner_name(owner) not in mentioned_owners]
 
-    # 确保所有者按字母顺序排序
-    new_owners_sorted = sorted(new_owners)
+    # 排序
+    new_owners_sorted = sorted(new_owners, key=lambda x: x.lower())  # 按字母排序
 
     # 创建该tag的单独所有者集合
-    tag_mentioned_owners = sorted(new_owners_sorted)
+    tag_mentioned_owners = [extract_owner_name(owner) for owner in new_owners_sorted]
 
     # 如果有新的维护者
     if tag_mentioned_owners:
