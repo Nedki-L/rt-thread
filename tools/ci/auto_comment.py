@@ -2,7 +2,6 @@ import json
 import os
 import requests
 import re
-import base64
 
 # 获取环境变量
 pr_files = os.getenv("PR_FILES", "").splitlines()
@@ -61,20 +60,23 @@ for tag, owners_list in owners.items():
     new_owners.update(owners_set)
 
     # 格式化评论，符合要求的格式
-    reviewer_line = f"**:technologist: Reviewer:** {' '.join([f'@{owner}' for owner in owners_set])}"
-    tag_line = f"**:technologist: Tag:** {tag}"
+    reviewer_line = f"Reviewer: {' '.join([f'@{owner}' for owner in owners_set])}"
+    tag_line = f"Tag: {tag}"
     review_focus = """
-**:zap: Review Focus:**
+Review Focus:
 The {tag} tag is ready for your review! Please pay close attention to the following aspects:
-- **:dizzy: Logical Flow:** Ensure that the workflow follows a logical sequence that makes sense to users.
-- **:mag: Optimizations:** Identify any opportunities to streamline the process for better efficiency.
-- **:monocle_face: Test Coverage:** Check if the workflow addresses all possible edge cases.
+- Logical Flow: Ensure that the workflow follows a logical sequence that makes sense to users.
+- Optimizations: Identify any opportunities to streamline the process for better efficiency.
+- Test Coverage: Check if the workflow addresses all possible edge cases.
 
-**:speech_balloon: Collaboration:** Your review will significantly improve this workflow. Your feedback is crucial to ensure it’s as smooth and reliable as possible!
+Collaboration: Your review will significantly improve this workflow. Your feedback is crucial to ensure it’s as smooth and reliable as possible!
 
-**:memo: Your Insight:**
+Your Insight:
 Your thorough review will help us ensure this tag is perfect and ready for use by the team. Every suggestion you make will have a big impact on improving the overall workflow.
 """
+
+    # 替换 `{tag}` 为实际 tag 值
+    review_focus = review_focus.replace("{tag}", tag)
 
     # 填充模板
     comment += f"{reviewer_line}\n{tag_line}\n{review_focus}\n\n"
@@ -90,11 +92,10 @@ if not comment:
     print("No comment generated. Exiting.")
     exit(1)
 
-# 确保 COMMENT_BODY 被正确传递到环境变量
+# 将评论写入文件
 comment_file = '/tmp/comment_body.txt'
-encoded_comment = base64.b64encode(comment.encode('utf-8')).decode('utf-8')  # 编码为 base64
 with open(comment_file, 'w') as f:
-    f.write(encoded_comment)
+    f.write(comment)
 
 print(f"Comment written to: {comment_file}")
 
