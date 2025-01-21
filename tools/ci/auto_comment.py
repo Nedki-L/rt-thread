@@ -57,7 +57,6 @@ def generate_comment(owners):
     comment = ""
     new_owners = set()
     for tag, owners_list in owners.items():
-        # 在生成评论时调用 extract_owner_name
         owners_set = set(extract_owner_name(owner) for owner in owners_list)
         new_owners.update(owners_set)
 
@@ -69,6 +68,7 @@ def generate_comment(owners):
         comment += f"Tag: {tag}\nPlease take a review of this tag\n\n"
 
     # 移除评论中的换行符和额外的空格
+    print(f"Generated comment before cleaning: {comment}")  # 调试输出
     return comment.replace('\n', ' ').strip()
 
 # 生成评论并设置环境变量
