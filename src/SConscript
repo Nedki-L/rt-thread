@@ -7,7 +7,7 @@ inc = [os.path.join(cwd, '..', 'include')]
 
 if GetDepend('RT_USING_SMALL_MEM') == False:
     SrcRemove(src, ['mem.c'])
-dasd
+
 if GetDepend('RT_USING_SLAB') == False:
     SrcRemove(src, ['slab.c'])
 
