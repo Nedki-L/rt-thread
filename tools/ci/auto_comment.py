@@ -34,9 +34,8 @@ def find_owners_for_file(files, maintainers):
             if file.startswith(maintainer["path"].lstrip('/')):  # 去掉路径中的前导斜杠
                 tag = maintainer["tag"]
                 if tag not in owners:
-                    owners[tag] = []
-                # 保留按原始顺序的维护者列表
-                owners[tag].extend(maintainer['owner'].split(','))
+                    owners[tag] = set()
+                owners[tag].update(maintainer['owner'].split(','))
     return owners
 
 # 获取与修改文件匹配的所有者
@@ -47,7 +46,7 @@ if not owners:
     print("No matching owners found for the modified files.")
     exit(0)
 
-# 提取评论格式化的所有者名字
+# 提取评论格式化的所有者名字（仅提取github id部分）
 def extract_owner_name(owner):
     match = re.match(r'.*\(([^)]+)\).*', owner)
     return match.group(1).strip() if match else owner.strip()
@@ -85,29 +84,26 @@ all_mentioned_owners = set()
 # 用于追踪已处理的标签
 processed_tags = set()
 
-# 处理每个标签
+# 按顺序处理每个标签
 for tag, owners_list in owners.items():
     if tag in processed_tags:
         continue  # 如果该标签已处理过，跳过
 
     # 提取当前标签的所有者，并去除已提及的维护者
     owners_set = {extract_owner_name(owner) for owner in owners_list}
-    new_owners = [owner for owner in owners_list if extract_owner_name(owner) not in mentioned_owners]
+    new_owners = owners_set - mentioned_owners
 
-    # 排序
-    new_owners_sorted = sorted(new_owners, key=lambda x: x.lower())  # 按字母排序
+    # 更新全局的已提及维护者集合
+    all_mentioned_owners.update(new_owners)
 
-    # 创建该tag的单独所有者集合
-    tag_mentioned_owners = [extract_owner_name(owner) for owner in new_owners_sorted]
-
-    # 如果有新的维护者
-    if tag_mentioned_owners:
+    # 生成评论时，确保每个维护者前面加上 `@` 符号
+    if new_owners:
         # 获取当前时间戳
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
         # 创建评论内容
         comment_body = f"Timeout: {current_time}\n"
-        comment_body += f"Reviewer: {' @'.join(tag_mentioned_owners)}\n"  # 确保每个维护者加上 @
+        comment_body += f"Reviewer: {' @'.join(sorted(all_mentioned_owners))}\n"  # 确保每个维护者加上 @
         comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
         
         # 转义换行符和双引号
@@ -117,9 +113,6 @@ for tag, owners_list in owners.items():
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
-
-        # 更新全局的已提及维护者集合
-        all_mentioned_owners.update(tag_mentioned_owners)
 
         # 标记该标签已处理
         processed_tags.add(tag)
