@@ -2,6 +2,7 @@ import json
 import os
 import requests
 import re
+import time
 
 # 获取环境变量
 pr_files = os.getenv("PR_FILES", "").split(",")
@@ -86,13 +87,19 @@ for tag, owners_list in owners.items():
     final_owners.update(new_owners)
 
 if final_owners:
-    comment_body = f"Reviewer: {' @'.join(sorted(final_owners))}\n"
-    for tag, owners_list in owners.items():
-        comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
+    # 获取当前时间戳
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     
-    comment_body = comment_body.replace("\n", "\\n")  # 转义换行符
-    comment_file_path = f"{comments_dir}/reviewer_comment.txt"
-    with open(comment_file_path, 'w') as f:
-        f.write(comment_body)
+    # 分离不同的tag评论并附加时间戳
+    for tag, owners_list in owners.items():
+        comment_body = f"------------------------------------------------------------------------\n"
+        comment_body += f"Timeout: {current_time}\n"
+        comment_body += f"Reviewer: {' @'.join(sorted(final_owners))}\n"
+        comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
+        comment_body += f"------------------------------------------------------------------------\n"
+        
+        comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
+        with open(comment_file_path, 'w') as f:
+            f.write(comment_body)
 
 print(f"Comments generated in: {comments_dir}")
