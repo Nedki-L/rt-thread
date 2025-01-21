@@ -45,8 +45,7 @@ jobs:
       - name: Get COMMENT_BODY from file
         run: |
           COMMENT_BODY=$(cat /tmp/comment_body.txt)
-          DECODED_COMMENT=$(echo "$COMMENT_BODY" | base64 --decode)  # 解码
-          echo "COMMENT_BODY=${DECODED_COMMENT}" >> $GITHUB_ENV
+          echo "COMMENT_BODY=${COMMENT_BODY}" >> $GITHUB_ENV
 
       - name: Post comment to PR
         run: |
