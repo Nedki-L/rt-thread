@@ -79,28 +79,41 @@ for comment_data in existing_comments:
 comments_dir = "/tmp/comments"
 os.makedirs(comments_dir, exist_ok=True)
 
-final_owners = set()
+# 用于追踪已提及的维护者
+all_mentioned_owners = set()
+# 用于追踪已处理的标签
+processed_tags = set()
+
 for tag, owners_list in owners.items():
+    if tag in processed_tags:
+        continue  # 如果该标签已处理过，跳过
+
+    # 提取当前标签的所有者，并去除已提及的维护者
     owners_set = {extract_owner_name(owner) for owner in owners_list}
     new_owners = owners_set - mentioned_owners
 
-    final_owners.update(new_owners)
+    # 更新全局的已提及维护者集合
+    all_mentioned_owners.update(new_owners)
 
-if final_owners:
-    # 获取当前时间戳
-    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-    
-    # 分离不同的tag评论并附加时间戳
-    for tag, owners_list in owners.items():
+    # 生成评论时，确保每个维护者前面加上 `@` 符号
+    if new_owners:
+        # 获取当前时间戳
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+        # 创建评论内容
         comment_body = f"Timeout: {current_time}\n"
-        comment_body += f"Reviewer: {' @'.join(sorted(final_owners))}\n"
+        comment_body += f"Reviewer: {' @'.join(sorted(all_mentioned_owners))}\n"  # 确保每个维护者加上 @
         comment_body += f"\nTag: {tag}\nPlease take a review of this tag\n"
         
         # 转义换行符和双引号
         comment_body = comment_body.replace('\n', '\\n').replace('"', '\\"')
 
+        # 写入评论文件
         comment_file_path = f"{comments_dir}/{tag.replace(' ', '_')}_comment.txt"
         with open(comment_file_path, 'w') as f:
             f.write(comment_body)
+
+        # 标记该标签已处理
+        processed_tags.add(tag)
 
 print(f"Comments generated in: {comments_dir}")
