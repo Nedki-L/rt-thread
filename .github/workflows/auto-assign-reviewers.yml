@@ -12,77 +12,128 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
-      - name: Get changed files in the PR
+      - name: Get changed files
         id: changed_files
         run: |
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
-          filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
+          
+          # 过滤 MAINTAINER 文件自身修改
+          filtered_files=$(echo "$changed_files" | grep -v '^MAINTAINER$')
           echo "$filtered_files" > changed_files.txt
-          echo "Changed files:"
-          cat changed_files.txt
+          echo "🔄 Changed files detected:"
+          cat changed_files.txt | sed 's/^/  - /'
 
       - name: Parse MAINTAINER file
         id: parse_maintainer
         run: |
+          echo "📖 Parsing MAINTAINER file..."
           maintainer_content=$(cat MAINTAINER)
           tag_data=""
+          
+          # 解析逻辑
+          current_tag=""
+          current_path=""
           while IFS= read -r line; do
-            if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
+            if [[ "$line" =~ ^tag:[[:space:]]+(.+)$ ]]; then
               current_tag="${BASH_REMATCH[1]}"
-            elif [[ "$line" =~ ^path:[[:space:]]+(.*) ]]; then
-              path="${BASH_REMATCH[1]}"
-            elif [[ "$line" =~ ^owners:[[:space:]]+(.*) ]]; then
+              echo "  🔍 Found tag: $current_tag"
+            elif [[ "$line" =~ ^path:[[:space:]]+(.+)$ ]]; then
+              current_path="${BASH_REMATCH[1]}"
+              echo "    📁 Path: $current_path"
+            elif [[ "$line" =~ ^owners:[[:space:]]+(.+)$ ]]; then
               owners="${BASH_REMATCH[1]}"
-              github_ids=$(echo "$owners" | sed -E 's/[^,]*\(([^)]+)\).*?/@\1/g' | tr ',' ' ' | xargs)
-              tag_data+="$current_tag|$path|$github_ids\n"
+              # 提取 GitHub ID（精准匹配括号内容）
+              github_ids=$(echo "$owners" | sed -E 's/[^,(]*\(([^)]+)\)[^,]*/@\1/g' | tr ',' ' ' | xargs)
+              echo "    👥 Owners: $github_ids"
+              tag_data+="${current_tag}|${current_path}|${github_ids}\n"
             fi
           done <<< "$maintainer_content"
+          
           echo -e "$tag_data" > tag_data.txt
-          echo "Parsed tag data:"
-          cat tag_data.txt
+          echo "✅ Parsed tag data:"
+          column -t -s "|" tag_data.txt | sed 's/^/  /'
 
-      - name: Match changed files with tags
+      - name: Match tags with changed files
         id: match_tags
         run: |
           changed_files=$(cat changed_files.txt)
           tag_data=$(cat tag_data.txt)
           required_reviewers=""
           declare -A processed_tags
+          
+          echo "🔍 Starting file-path matching..."
           while IFS='|' read -r tag path github_ids; do
             [[ -z "$tag" ]] && continue
-            if [[ -n "${processed_tags[$tag]}" ]]; then
-              continue
-            fi
+            echo "  🏷 Checking tag: $tag (path: $path)"
+            
             for file in $changed_files; do
-              if [[ "$file" == $path/* || "$file" == $path ]]; then
-                required_reviewers+="$github_ids "
-                processed_tags["$tag"]=1
+              if [[ "$file" == "$path" || "$file" == "$path/"* ]]; then
+                echo "    ✅ Match found: $file → $path"
+                if [[ -z "${processed_tags[$tag]}" ]]; then
+                  required_reviewers+="$github_ids "
+                  processed_tags["$tag"]=1
+                  echo "      👥 Adding reviewers: $github_ids"
+                fi
                 break
+              else
+                echo "    ❌ No match: $file ≠ $path"
               fi
             done
           done <<< $(echo -e "$tag_data" | grep -v '^$')
+          
+          # 去重处理
           required_reviewers=$(echo "$required_reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
           echo "REVIEWERS=$required_reviewers" >> $GITHUB_ENV
-          echo "Final reviewers: $required_reviewers"
+          echo "🎯 Final reviewers: $required_reviewers"
 
-      - name: Post comment on the PR
+      - name: Delete old comments
+        id: delete_comments
         if: env.REVIEWERS != ''
         run: |
-          comment_body=$(jq -n --arg body "Required reviewers: $REVIEWERS" '{body: $body}')
+          echo "🧹 Cleaning up previous comments..."
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          
+          echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id' | while read -r comment_id; do
+            echo "  🗑 Deleting comment $comment_id"
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+          done
+
+      - name: Post review comment
+        if: env.REVIEWERS != ''
+        run: |
+          echo "📝 Generating comment..."
+          comment_header="📌 **Code Owners Request**\n\n**Modified areas:**\n"
+          matched_tags=$(cat tag_data.txt | grep -v '^$' | while IFS='|' read -r tag path _; do
+            echo "- \`$path\` (Tag: **$tag**)"
+          done)
+          
+          comment_body="${comment_header}${matched_tags}\n\n**Required reviewers**: ${{ env.REVIEWERS }}"
+          
+          echo "✉️ Posting comment:"
+          echo -e "$comment_body" | sed 's/^/  /'
+          
+          # 使用 jq 确保 JSON 格式正确
+          comment_json=$(jq -n --arg body "$comment_body" '{body: $body}')
           response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
             -X POST \
-            -d "$comment_body" \
-            -w "\nHTTP_STATUS:%{http_code}" \
+            -d "$comment_json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-          http_status=$(echo "$response" | grep 'HTTP_STATUS:' | cut -d':' -f2)
-          if [[ "$http_status" != "201" ]]; then
-            echo "Failed to post comment. Status: $http_status"
+          
+          if echo "$response" | grep -q '"message"'; then
+            echo "❌ Failed to post comment:"
+            echo "$response" | jq .
             exit 1
+          else
+            echo "✅ Comment posted successfully!"
           fi
