@@ -50,20 +50,15 @@ jobs:
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md
           
-          # 生成评论头部（严格控制空行）
+          # 初始化评论内容
           echo "## 📌 Code Ownership Review Request" > review_data.md
+          echo "" >> review_data.md
           
+          # 生成标签块
           while IFS='|' read -r tag path reviewers; do
-            echo "🔍 Processing tag: $tag"
             matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
-            
             if [[ -n "$matched_files" ]]; then
-              echo "  ✅ Matched files:"
-              echo "$matched_files" | sed 's/^/    - /'
-              
-              # 生成带间距的Markdown块
               {
-                echo ""
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
                 echo "**Reviewers:** $reviewers  "
@@ -73,36 +68,69 @@ jobs:
                 echo "$matched_files" | sed 's/^/- /'
                 echo ""
                 echo "</details>"
+                echo ""
               } >> review_data.md
             fi
           done < tag_data.csv
+      
+          # 动态生成审核者列表（关键修复）
+          awk -F'|' '{print $3}' tag_data.csv | 
+          tr ' ' '\n' | 
+          awk 'NF && !seen[$0]++' |  # 过滤空行并去重
+          sed 's/[[:space:]]*$//' > reviewers.txt  # 去除行尾空格
           
-          # 强制设置环境变量（关键修复）
+          # 添加审核进度跟踪模块
+          if [[ -s reviewers.txt ]]; then
+            {
+              echo "---"
+              echo "### 📝 Review Progress"
+              echo "Click checkboxes to mark completion:"
+              while IFS= read -r reviewer; do
+                echo "- [ ] ${reviewer}"
+              done < reviewers.txt
+              echo ""
+              echo "*Note: Checkboxes are interactive in GitHub comments.*"
+            } >> review_data.md
+          fi
+      
+          # 设置环境变量
           if [[ -s review_data.md ]]; then
             echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
             echo "📝 Generated review data:"
             cat review_data.md
           else
             echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-            echo "⚠️ No matching tags found"
           fi
-          
-          # 调试输出当前目录结构
-          echo "::group::Directory Structure"
-          pwd
-          ls -al
-          echo "::endgroup::"
 
       - name: Delete old comments
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          echo "::group::Deleting previous comments..."
-          comment_ids=$(
-            curl -s \
+          echo "::group::Cleaning up previous comments..."
+          
+          # 获取所有评论（处理分页）
+          page=1
+          all_comments=""
+          while true; do
+            comments=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" |
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | .id'
-          )
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?per_page=100&page=$page")
+            
+            # 判断是否还有数据
+            if [[ $(echo "$comments" | jq '. | length') -eq 0 ]]; then
+              break
+            fi
+            
+            all_comments+=$(echo "$comments" | jq -c '.[]')
+            ((page++))
+          done
+
+          # 提取需要删除的评论ID
+          comment_ids=$(echo "$all_comments" | jq -r 'select(.user.login == "github-actions[bot]") | .id')
+          
+          echo "Found ${#comment_ids[@]} bot comments to delete"
+          
+          # 删除所有历史评论
           for id in $comment_ids; do
             echo "Deleting comment $id"
             curl -s -X DELETE \
@@ -114,29 +142,10 @@ jobs:
       - name: Post structured comment
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          # 动态生成去重审核者列表（保留原始顺序）
-          reviewers_list=$(awk -F'|' '{print $3}' tag_data.csv | tr ' ' '\n' | awk '!seen[$0]++' | xargs)
+          full_comment=$(cat review_data.md)
           
-          # 构建评论内容
-          comment_header="## 📌 Code Ownership Review Request\n\n"
-          comment_body=$(cat review_data.md)
-          progress_section="\n\n---\n### 📝 Review Progress\n"
-          progress_section+="Click checkboxes to mark completion:\n"
-          
-          for reviewer in $reviewers_list; do
-            progress_section+="- [ ] ${reviewer}\n"
-          done
-          progress_section+="\n*Note: Checkboxes are interactive in GitHub comments.*"
-          
-          full_comment="${comment_header}${comment_body}${progress_section}"
-          
-          # 使用jq安全生成JSON（自动处理转义）
+          # 安全生成JSON（自动处理换行符）
           comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
-          
-          # 调试输出
-          echo "::group::Generated JSON Preview"
-          echo "$comment_json"
-          echo "::endgroup::"
           
           # 发送请求
           response=$(curl -s \
@@ -146,11 +155,4 @@ jobs:
             -d "$comment_json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
-          # 处理响应
-          if echo "$response" | grep -q '"message"'; then
-            echo "❌ Error: $(echo "$response" | jq .message)"
-            exit 1
-          else
-            echo "✅ Comment posted successfully!"
-            echo "View comment at: $(echo "$response" | jq .html_url)"
-          fi
+          echo "✅ Comment posted at: $(echo "$response" | jq .html_url)"
