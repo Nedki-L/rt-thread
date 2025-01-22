@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v2  # 获取仓库的完整代码
 
       - name: Get changed files in the PR
         id: changed_files
@@ -26,6 +26,7 @@ jobs:
         id: parse_maintainer
         run: |
           echo "Parsing MAINTAINER file..."
+          # 确保仓库代码已经被 checkout，这里直接读取 MAINTAINER 文件
           maintainer_content=$(cat MAINTAINER)
           echo "maintainer_content=$maintainer_content" >> $GITHUB_ENV  # 保存到环境变量中
 
@@ -71,4 +72,3 @@ jobs:
             -X POST \
             -d "{\"body\": \"$comment\"}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-
