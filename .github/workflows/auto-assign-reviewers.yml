@@ -1,4 +1,4 @@
-name: Assign Reviewers Based on Maintainer File
+name: Auto Reviewers Assignment
 
 on:
   pull_request:
@@ -7,111 +7,67 @@ on:
 jobs:
   assign-reviewers:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout the code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.x
-
-      - name: Install dependencies
-        run: pip install PyYAML requests
-
-      - name: Write Python script for maintainer parsing
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Get changed files in the PR
+        id: changed_files
         run: |
-          echo '''
-          import os
-          import requests
-          from datetime import datetime
-          
-          # Load the MAINTAINER file
-          MAINTAINER_FILE = "MAINTAINER"
-          
-          if not os.path.exists(MAINTAINER_FILE):
-              raise FileNotFoundError(f"{MAINTAINER_FILE} not found in the repository.")
-          
-          with open(MAINTAINER_FILE, "r") as f:
-              maintainer_data = f.read()
-
-          # Parse the MAINTAINER file
-          def parse_maintainer(content):
-              tags = []
-              for section in content.strip().split("\\n\\n"):
-                  lines = section.strip().split("\\n")
-                  tag = lines[0].split(":")[1].strip()
-                  path = lines[1].split(":")[1].strip()
-                  owners_raw = lines[2].split(":")[1].strip()
-                  owners = [owner.split("(")[0].strip() for owner in owners_raw.split(",")]
-                  tags.append({"tag": tag, "path": path, "owners": owners})
-              return tags
-
-          maintainer_tags = parse_maintainer(maintainer_data)
-
-          # Get the PR files using GitHub API
-          repo = os.getenv("GITHUB_REPOSITORY")
-          pr_number = os.getenv("GITHUB_EVENT_PULL_REQUEST_NUMBER")
-          api_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
-          headers = {"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
-
-          response = requests.get(api_url, headers=headers)
-          if response.status_code != 200:
-              raise Exception(f"Failed to fetch PR files: {response.status_code} - {response.text}")
-          
-          pr_files = response.json()
-
-          # Extract the modified file paths
-          modified_files = [file["filename"] for file in pr_files]
-
-          # Match files to tags and reviewers
-          triggered_tags = {}
-          for file in modified_files:
-              for tag_info in maintainer_tags:
-                  path = tag_info["path"]
-                  if file.startswith(path):  # Match file path recursively
-                      tag = tag_info["tag"]
-                      if tag not in triggered_tags:
-                          triggered_tags[tag] = {"paths": set(), "owners": set(tag_info["owners"])}
-                      triggered_tags[tag]["paths"].add(file)
-
-          # Generate the comment content
-          timestamp = datetime.utcnow().isoformat()
-          comment_lines = []
-          for tag, data in triggered_tags.items():
-              reviewer_mentions = " ".join([f"@{owner}" for owner in data["owners"]])
-              file_list = "\\n".join(data["paths"])
-              comment_lines.append(
-                  f"Timestamp: {timestamp}\\nReviewer: {reviewer_mentions}\\n\\nTag: {tag}\\nPlease take a review of this tag\\nAffected files:\\n{file_list}\\n"
-              )
-
-          comment_body = "\\n---\\n".join(comment_lines)
-
-          # Set the comment body for the next step
-          print(f"::set-output name=comment_body::{comment_body}")
-          ''' > parse_maintainer.py
-
-      - name: Run Python script to parse maintainers and assign reviewers
-        run: python3 parse_maintainer.py
-
-      - name: Install jq (for JSON parsing)
-        run: sudo apt-get install -y jq
-
-      - name: Upload Comment to PR
-        if: steps.parse-maintainer.outputs.comment_body != ''
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "Getting changed files..."
+          changed_files=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
+            jq -r '.[].filename')
+          echo "Changed files: $changed_files"
+          echo "::set-output name=changed_files::$changed_files"
+        
+      - name: Parse MAINTAINER file
+        id: parse_maintainer
         run: |
-          COMMENT_BODY="${{ steps.parse-maintainer.outputs.comment_body }}"
-          PAYLOAD=$(echo '{}' | jq --arg body "$COMMENT_BODY" '.body = $body')
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          curl -s -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+          echo "Parsing MAINTAINER file..."
+          maintainer_content=$(cat MAINTAINER)
+          echo "::set-output name=maintainer_content::$maintainer_content"
+        
+      - name: Generate review comments
+        id: generate_comments
+        run: |
+          # 解析 MAINTAINER 文件并根据修改的文件生成评论
+          changed_files="${{ steps.changed_files.outputs.changed_files }}"
+          maintainer_content="${{ steps.parse_maintainer.outputs.maintainer_content }}"
+          
+          # 初始化空的评论内容
+          comment_msg=""
 
-      - name: Save Comment Locally
-        if: steps.parse-maintainer.outputs.comment_body != ''
-        run: echo "${{ steps.parse-maintainer.outputs.comment_body }}" > comment_msg.txt
+          # 解析 MAINTAINER 文件，按 tag 分类
+          tags=$(echo "$maintainer_content" | grep -oP 'tag: \K\w+')
+          
+          for tag in $tags; do
+            # 获取对应的 path 和 reviewers
+            paths=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'path:' | awk '{print $2}')
+            owners=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'owners:' | sed 's/owners: //')
+            
+            for path in $paths; do
+              # 判断修改的文件是否匹配该 path
+              for file in $changed_files; do
+                if [[ "$file" == $path* ]]; then
+                  # 生成评论内容
+                  reviewers=$(echo "$owners" | sed 's/,/ @/g' | sed 's/^/@/')
+                  timestamp=$(date +'%Y-%m-%d %H:%M:%S')
+                  comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
+                fi
+              done
+            done
+          done
+
+          echo "::set-output name=comment_msg::$comment_msg"
+
+      - name: Post comment on the PR
+        if: steps.generate_comments.outputs.comment_msg != ''
+        run: |
+          comment="${{ steps.generate_comments.outputs.comment_msg }}"
+          curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -X POST \
+            -d "{\"body\": \"$comment\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
