@@ -80,7 +80,7 @@ jobs:
             paths=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; print $2}')
             
             # 使用 awk 提取 owners 信息，支持多行处理
-            owners=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; getline; print substr($0, index($0,$3))}')
+            owners=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; getline; print substr($0, index($0,$3))}' | tr -d '\n' | sed 's/ $//')
 
             # 调试输出：查看解析到的 owners
             echo "Parsed owners for tag $tag: $owners"
