@@ -28,13 +28,13 @@ jobs:
           import os
           import requests
           from datetime import datetime
-
+          
           # Load the MAINTAINER file
           MAINTAINER_FILE = "MAINTAINER"
           
           if not os.path.exists(MAINTAINER_FILE):
               raise FileNotFoundError(f"{MAINTAINER_FILE} not found in the repository.")
-
+          
           with open(MAINTAINER_FILE, "r") as f:
               maintainer_data = f.read()
 
@@ -54,12 +54,14 @@ jobs:
 
           # Get the PR files using GitHub API
           repo = os.getenv("GITHUB_REPOSITORY")
-          pr_number = os.getenv("GITHUB_REF").split("/")[-2]
+          pr_number = os.getenv("GITHUB_EVENT_PULL_REQUEST_NUMBER")
           api_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
           headers = {"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
 
           response = requests.get(api_url, headers=headers)
-          response.raise_for_status()
+          if response.status_code != 200:
+              raise Exception(f"Failed to fetch PR files: {response.status_code} - {response.text}")
+          
           pr_files = response.json()
 
           # Extract the modified file paths
@@ -88,21 +90,20 @@ jobs:
 
           comment_body = "\n---\n".join(comment_lines)
 
-          # Save the comment content to a file
-          with open("comment_msg.txt", "w") as comment_file:
-              comment_file.write(comment_body)
-
-          # Output the comment for the next step
+          # Set the comment body for the next step
           print(f"::set-output name=comment_body::{comment_body}")
+
+      - name: Install jq (for JSON parsing)
+        run: sudo apt-get install -y jq
 
       - name: Upload Comment to PR
         if: steps.parse-maintainer.outputs.comment_body != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          COMMENT_BODY=$(<comment_msg.txt)
+          COMMENT_BODY="${{ steps.parse-maintainer.outputs.comment_body }}"
           PAYLOAD=$(echo '{}' | jq --arg body "$COMMENT_BODY" '.body = $body')
-          PR_NUMBER=$(echo "${{ github.event.pull_request.number }}")
+          PR_NUMBER="${{ github.event.pull_request.number }}"
           curl -s -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/json" \
@@ -111,4 +112,4 @@ jobs:
 
       - name: Save Comment Locally
         if: steps.parse-maintainer.outputs.comment_body != ''
-        run: cat comment_msg.txt
+        run: echo "${{ steps.parse-maintainer.outputs.comment_body }}" > comment_msg.txt
