@@ -33,7 +33,26 @@ jobs:
         run: |
           echo "Saving MAINTAINER file..."
           cat MAINTAINER > maintainer_content.txt  # 保存 MAINTAINER 内容到临时文件
+          cat maintainer_content.txt
           echo "MAINTAINER content saved."
+
+      - name: Delete previous GitHub Action comments
+        id: delete_previous_comments
+        run: |
+          # 获取所有评论
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # 查找所有由 GitHub Actions Bot 生成的评论并删除
+          action_bot_comments=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id')
+          for comment_id in $action_bot_comments; do
+            echo "Deleting comment with ID: $comment_id"
+            curl -s \
+              -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+          done
 
       - name: Read MAINTAINER file and generate review comments
         id: generate_comments
