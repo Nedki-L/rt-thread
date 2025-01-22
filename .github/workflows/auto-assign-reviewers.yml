@@ -22,20 +22,19 @@ jobs:
           echo "Changed files: $changed_files"
           echo "changed_files=$changed_files" >> $GITHUB_ENV  # 保存到环境变量中
 
-      - name: Parse MAINTAINER file
-        id: parse_maintainer
+      - name: Save MAINTAINER file to a temporary file
+        id: save_maintainer
         run: |
-          echo "Parsing MAINTAINER file..."
-          # 确保仓库代码已经被 checkout，这里直接读取 MAINTAINER 文件
-          maintainer_content=$(cat MAINTAINER)
-          echo "maintainer_content=$maintainer_content" >> $GITHUB_ENV  # 保存到环境变量中
+          echo "Saving MAINTAINER file..."
+          cat MAINTAINER > maintainer_content.txt  # 保存 MAINTAINER 内容到临时文件
+          echo "MAINTAINER content saved."
 
-      - name: Generate review comments
+      - name: Read MAINTAINER file and generate review comments
         id: generate_comments
         run: |
-          # 从环境变量中获取修改的文件和 MAINTAINER 内容
+          # 读取保存的 MAINTAINER 内容
+          maintainer_content=$(cat maintainer_content.txt)
           changed_files="${{ env.changed_files }}"
-          maintainer_content="${{ env.maintainer_content }}"
 
           # 初始化空的评论内容
           comment_msg=""
