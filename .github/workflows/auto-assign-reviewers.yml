@@ -59,6 +59,8 @@ jobs:
         run: |
           # 读取保存的 MAINTAINER 内容
           maintainer_content=$(cat maintainer_content.txt)
+
+          echo "MAINTAINER content: $maintainer_content"
           
           # 读取修改的文件路径
           changed_files=$(cat changed_files.txt)
