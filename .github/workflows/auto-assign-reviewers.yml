@@ -33,7 +33,7 @@ jobs:
             MAINTAINER_JSON=$(cat MAINTAINER.json)
             echo "Successfully read MAINTAINER.json."
             echo "Contents of MAINTAINER.json:"
-            echo "$MAINTAINER_JSON"
+            echo "$MAINTAINER_JSON"  # Debugging output
           else
             echo "Error: MAINTAINER.json not found."
             exit 1
@@ -46,9 +46,11 @@ jobs:
           # Initialize variables
           timestamp=$(date +'%Y-%m-%d %H:%M:%S')
 
-          # Parse MAINTAINER.json
+          # Debug output to check the content of MAINTAINER.json
           maintainer_json="${{ steps.fetch-maintainer-json.outputs.maintainer-json }}"
-          
+          echo "Debug: MAINTAINER.json content"
+          echo "$maintainer_json"  # Debugging output
+
           # Ensure MAINTAINER.json is valid JSON
           echo "$maintainer_json" | jq empty
           if [ $? -ne 0 ]; then
