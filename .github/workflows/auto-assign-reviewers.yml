@@ -59,7 +59,8 @@ jobs:
             # Check if any modified file matches the path (flexible matching)
             for file in "${MODIFIED_FILES_ARRAY[@]}"; do
               # Check if the file is in the directory or matches the tag path
-              if [[ "$file" == $path* ]]; then
+              # Here we are allowing for recursive directory matching (e.g. /src -> matches src/*)
+              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
                 echo "File $file matches tag $tag"
 
                 # Collect reviewers for this tag
