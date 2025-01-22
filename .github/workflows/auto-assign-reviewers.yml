@@ -16,15 +16,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq gh
+
       - name: Get modified files
         id: get-modified-files
         run: |
           echo "::set-output name=modified_files::$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})"
-      
+
       - name: Fetch MAINTAINER.json
         id: fetch-maintainer-json
         run: |
-          MAINTAINER_JSON=$(cat MAINTAINER.json)
+          if [[ -f "MAINTAINER.json" ]]; then
+            MAINTAINER_JSON=$(cat MAINTAINER.json)
+            echo "Successfully read MAINTAINER.json."
+          else
+            echo "Error: MAINTAINER.json not found."
+            exit 1
+          fi
           echo "::set-output name=maintainer-json::${MAINTAINER_JSON}"
 
       - name: Process PR and comment
@@ -35,6 +46,14 @@ jobs:
 
           # Parse MAINTAINER.json
           maintainer_json="${{ steps.fetch-maintainer-json.outputs.maintainer-json }}"
+          
+          # Ensure MAINTAINER.json is valid JSON
+          echo "$maintainer_json" | jq empty
+          if [ $? -ne 0 ]; then
+            echo "Error: Invalid MAINTAINER.json format."
+            exit 1
+          fi
+
           IFS=$'\n'
           declare -A tag_reviewers
 
@@ -84,3 +103,9 @@ jobs:
         with:
           path: ~/.cache
           key: ${{ runner.os }}-dependencies-${{ hashFiles('**/*.json') }}
+
+      - name: Configure GitHub CLI with provided GITHUB_TOKEN
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
