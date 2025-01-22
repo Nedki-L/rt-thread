@@ -84,6 +84,25 @@ jobs:
             echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
           fi
 
+      - name: Delete old comments
+        if: env.REVIEW_DATA_EXISTS == 'true'
+        run: |
+          echo "::group::Deleting previous comments..."
+          comment_ids=$(
+            curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" |
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | .id'
+          )
+          
+          for id in $comment_ids; do
+            echo "Deleting comment $id"
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$id"
+          done
+          echo "::endgroup::"
+
       - name: Post structured comment
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
