@@ -27,13 +27,13 @@ jobs:
           PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
             | jq -r '.[].filename' | tr '\n' ' ')
-
+          
           echo "Modified files: $PR_FILES"
           echo "modified_files=$PR_FILES" >> $GITHUB_ENV
 
       # Step 4: Parse MAINTAINER.json and check file tags
       - name: Parse MAINTAINER.json and determine reviewers
-        id: parse-maintenancer-json
+        id: parse-maintainer-json
         run: |
           echo "Parsing MAINTAINER.json and determining reviewers..."
 
@@ -41,7 +41,7 @@ jobs:
           MODIFIED_FILES="${{ env.modified_files }}"
           REVIEWERS_LIST=""
           COMMENT_BODY=""
-          
+
           # Convert the modified files string into an array
           MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
 
@@ -51,7 +51,7 @@ jobs:
           jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
             # Extract tag, path, and owner information from the JSON
             tag=$(echo $tag_info | jq -r '.tag')
-            path=$(echo $tag_info | jq -r '.path')
+            path=$(echo $tag_info | jq -r '.path' | sed 's|^/||') # Remove leading slash for proper matching
             owners=$(echo $tag_info | jq -r '.owner')
 
             echo "Processing tag: $tag, path: $path, owners: $owners"
@@ -59,8 +59,7 @@ jobs:
             # Check if any modified file matches the path (flexible matching)
             for file in "${MODIFIED_FILES_ARRAY[@]}"; do
               # Check if the file is in the directory or matches the tag path
-              # Here we are allowing for recursive directory matching (e.g. /src -> matches src/*)
-              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
+              if [[ "$file" == *"$path"* ]]; then
                 echo "File $file matches tag $tag"
 
                 # Collect reviewers for this tag
@@ -74,6 +73,7 @@ jobs:
                 # Prepare the comment for this tag
                 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
                 COMMENT_BODY+="\nTimestamp: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
+                break
               else
                 echo "File $file does not match tag $tag"
               fi
