@@ -45,19 +45,18 @@ jobs:
           column -t -s "|" tag_data.csv | sed 's/^/  /'
 
       - name: Generate review data
-        id: generate_review_step  # 关键修正：确保唯一ID
+        id: generate_review_step
         run: |
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md
           
+          # 初始化评论内容（开头不加空行）
+          echo "## 📌 Code Ownership Review Request" > review_data.md
+          
           while IFS='|' read -r tag path reviewers; do
-            echo "🔍 Checking tag [$tag] (path: $path)"
-            
             matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
             if [[ -n "$matched_files" ]]; then
-              echo "  ✅ Matched files:"
-              echo "$matched_files" | sed 's/^/    - /'
-              
+              # 生成紧凑格式的内容块
               {
                 echo ""
                 echo "### 🏷️ Tag: $tag"
@@ -70,18 +69,11 @@ jobs:
                 echo ""
                 echo "</details>"
               } >> review_data.md
-            else
-              echo "  ❌ No matching files"
             fi
           done < tag_data.csv
-          
-          if [[ -f review_data.md ]]; then
-            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
-            echo "📝 Generated review data:"
-            cat review_data.md
-          else
-            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-          fi
+      
+          # 移除第一个多余的空行
+          sed -i '/^$/N;/\n##/s/\n//' review_data.md
 
       - name: Delete old comments
         if: env.REVIEW_DATA_EXISTS == 'true'
