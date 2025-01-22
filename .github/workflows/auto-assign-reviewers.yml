@@ -17,144 +17,97 @@ jobs:
       - name: Get changed files
         id: changed_files
         run: |
-          # 获取修改文件列表（带调试日志）
-          echo "::group::Fetching changed files..."
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
-          echo "Raw changed files:"
-          echo "$changed_files"
           
-          filtered_files=$(echo "$changed_files" | grep -v '^MAINTAINER$')
-          echo "$filtered_files" > changed_files.txt
-          echo "::endgroup::"
-          echo "🔄 Filtered changed files:"
+          echo "$changed_files" | grep -v '^MAINTAINER$' > changed_files.txt
+          echo "🔄 Changed files:"
           cat changed_files.txt | sed 's/^/  - /'
 
       - name: Parse MAINTAINER file
         id: parse_maintainer
         run: |
-          echo "::group::Parsing MAINTAINER file..."
-          # 生成结构化数据（带严格格式检查）
-          {
-            echo "tag|path|owners";
-            awk '/^tag:/ {tag=$2} /^path:/ {path=$2} /^owners:/ {print tag "|" path "|" $0}' MAINTAINER | 
-            sed -E 's/tag: (.*)/\1/; s/path: (.*)/\1/; s/owners: //';
-          } > tag_data.csv
+          # 使用 AWK 精准解析 MAINTAINER 文件
+          awk '
+            /^tag:/ { tag=$2 }
+            /^path:/ { path=$2 }
+            /^owners:/ {
+              # 提取括号内的 GitHub ID（排除邮箱）
+              split($0, parts, /[()]/)
+              github_ids = ""
+              for (i=2; i<=length(parts); i+=2) {
+                github_ids = github_ids "@" parts[i] " "
+              }
+              print tag "|" path "|" github_ids
+            }
+          ' MAINTAINER > tag_data.csv
           
-          echo "Generated tag_data.csv:"
+          echo "✅ Parsed data:"
           column -t -s "|" tag_data.csv | sed 's/^/  /'
-          echo "::endgroup::"
 
-      - name: Match tags and generate review list
-        id: match_tags
+      - name: Generate review data
+        id: generate_review
         run: |
-          echo "::group::Matching tags process..."
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md
           
-          # 遍历每个标签配置
-          while IFS='|' read -r tag path owners; do
-            [[ "$tag" == "tag" ]] && continue  # 跳过标题行
+          while IFS='|' read -r tag path reviewers; do
+            echo "🔍 Checking tag [$tag] (path: $path)"
             
-            echo "Processing tag: [$tag], path: [$path]"
-            
-            # 提取GitHub ID（严格模式）
-            github_ids=$(
-              echo "$owners" | 
-              sed -E 's/([^,()]+)\(([^)]+)\)/\2/g' |  # 提取括号内容
-              tr ',' '\n' | 
-              awk '{$1=$1;print}' |                   # 清理空格
-              sort -u | 
-              sed 's/^/@/g' | 
-              tr '\n' ' '
-            )
-            
-            # 检查文件路径匹配（支持子目录）
-            matched_files=$(
-              grep -E "^$path(/|$)" changed_files.txt || true
-            )
-            
+            # 严格路径匹配（支持子目录）
+            matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
             if [[ -n "$matched_files" ]]; then
-              echo "✅ Matched files for tag [$tag]:"
-              echo "$matched_files" | sed 's/^/  - /'
+              echo "  ✅ Matched files:"
+              echo "$matched_files" | sed 's/^/    - /'
               
-              # 生成Markdown内容块
+              # 生成格式化内容块
               {
-                echo "### 🏷️ Tag: $tag";
-                echo "**Path:** \`$path\`";
-                echo "**Reviewers:** $github_ids";
-                echo "**Changed Files:**";
-                echo "$matched_files" | sed 's/^/  - /';
-                echo "";
+                echo "### 🏷️ Tag: $tag"
+                echo "**Path:** \`$path\`  "
+                echo "**Reviewers:** $reviewers"
+                echo "**Changed Files:**  "
+                echo "$matched_files" | sed 's/^/  - /'
+                echo ""
               } >> review_data.md
             else
-              echo "❌ No files matched for tag [$tag]"
+              echo "  ❌ No matching files"
             fi
           done < tag_data.csv
           
-          # 确认数据生成
           if [[ -f review_data.md ]]; then
             echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
-            echo "Generated review_data.md:"
+            echo "📝 Generated review data:"
             cat review_data.md
           else
             echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-            echo "⚠️ No matching tags found"
           fi
-          echo "::endgroup::"
-
-      - name: Delete old comments
-        if: env.REVIEW_DATA_EXISTS == 'true'
-        run: |
-          echo "::group::Deleting previous comments..."
-          comment_ids=$(
-            curl -s \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" |
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | .id'
-          )
-          
-          for id in $comment_ids; do
-            echo "Deleting comment $id"
-            curl -s -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$id"
-          done
-          echo "::endgroup::"
 
       - name: Post structured comment
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          echo "::group::Posting new comment..."
+          # 生成专业 Markdown 评论
           comment_header="## 📌 Code Ownership Review Request\n\n"
           comment_body=$(cat review_data.md)
           full_comment="${comment_header}${comment_body}"
           
-          # 生成调试预览
-          echo "Preview of comment content:"
-          echo "--------------------------"
-          echo -e "$full_comment"
-          echo "--------------------------"
+          # 转义换行符为 JSON 兼容格式
+          formatted_comment=$(echo -e "$full_comment" | sed 's/$/\\n/' | tr -d '\n')
           
-          # 使用JSON安全格式化
-          comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
+          comment_json="{\"body\": \"$formatted_comment\"}"
           
-          response=$(
-            curl -s \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              -X POST \
-              -d "$comment_json" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-          )
+          # 发送请求并调试
+          response=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d "$comment_json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
           if echo "$response" | grep -q '"message"'; then
-            echo "❌ Failed to post comment:"
-            echo "$response" | jq .
+            echo "❌ Error: $(echo "$response" | jq .message)"
             exit 1
           else
             echo "✅ Comment posted successfully!"
           fi
-          echo "::endgroup::"
