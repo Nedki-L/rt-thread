@@ -42,17 +42,26 @@ jobs:
           REVIEWERS_LIST=""
           COMMENT_BODY=""
 
-          # Loop through each tag in MAINTAINER.json and check the modified files
-          while IFS= read -r tag_info; do
+          # Convert the modified files string into an array
+          MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
+
+          echo "Initialize variables"
+
+          # Read the MAINTAINER.json file and parse each tag's information
+          jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
+            # Extract tag, path, and owner information from the JSON
             tag=$(echo $tag_info | jq -r '.tag')
             path=$(echo $tag_info | jq -r '.path')
             owners=$(echo $tag_info | jq -r '.owner')
 
+            echo "Processing tag: $tag, path: $path, owners: $owners"
+
             # Check if any modified file matches the path
-            for file in $MODIFIED_FILES; do
+            for file in "${MODIFIED_FILES_ARRAY[@]}"; do
+              # Ensure proper path matching (handle both exact matches and prefix matches)
               if [[ "$file" == $path* ]]; then
                 echo "File $file matches tag $tag"
-                
+
                 # Collect reviewers for this tag
                 IFS=', ' read -r -a owner_array <<< "$owners"
                 reviewers=""
@@ -66,10 +75,16 @@ jobs:
                 COMMENT_BODY+="\nTimestamp: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
               fi
             done
-          done < <(jq -c '.[]' MAINTAINER.json)  # Read each element from MAINTAINER.json
+          done
 
           # Debug: Print the comment body for review
           echo "Generated COMMENT_BODY: $COMMENT_BODY"
+
+          # Check if COMMENT_BODY is empty
+          if [[ -z "$COMMENT_BODY" ]]; then
+            echo "No relevant files modified, skipping comment creation."
+            exit 0
+          fi
 
           # Set the reviewers and comment body as output variables
           echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
