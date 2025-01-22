@@ -99,6 +99,8 @@ jobs:
             done
           done
 
+          echo "comment_msg=$comment_msg" >> $GITHUB_ENV  # 保存评论内容到环境变量中
+
       - name: Post comment on the PR
         if: env.comment_msg != ''
         run: |
