@@ -9,42 +9,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2  # 获取仓库的完整代码
+        uses: actions/checkout@v2
 
       - name: Get changed files in the PR
         id: changed_files
         run: |
           echo "Getting changed files..."
-          # 使用 GitHub API 获取 PR 中修改的文件
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
-          
-          # 排除 MAINTAINER 文件
           filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
-          
-          # 将文件列表保存到一个临时文件
           echo "$filtered_files" > changed_files.txt
+          echo "Changed files:"
           cat changed_files.txt
-          echo "Changed files saved to changed_files.txt."
 
       - name: Save MAINTAINER file to a temporary file
         id: save_maintainer
         run: |
           echo "Saving MAINTAINER file..."
-          cat MAINTAINER > maintainer_content.txt  # 保存 MAINTAINER 内容到临时文件
-          echo "MAINTAINER content saved."
+          cat MAINTAINER > maintainer_content.txt
 
       - name: Delete previous GitHub Action comments
         id: delete_previous_comments
         run: |
-          # 获取所有评论
           comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-
-          # 查找所有由 GitHub Actions Bot 生成的评论并删除
           action_bot_comments=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id')
           for comment_id in $action_bot_comments; do
             echo "Deleting comment with ID: $comment_id"
@@ -57,63 +48,71 @@ jobs:
       - name: Read MAINTAINER file and generate review comments
         id: generate_comments
         run: |
-          # 读取保存的 MAINTAINER 内容
           maintainer_content=$(cat maintainer_content.txt)
-
-          # 打印 MAINTAINER 内容，检查格式
-          echo "MAINTAINER content: $maintainer_content"
-
-          # 读取修改的文件路径
           changed_files=$(cat changed_files.txt)
-
-          # 初始化空的评论内容
           comment_msg=""
-
-          # 用于避免重复通知的 tag 列表
           seen_tags=""
 
-          # 解析 MAINTAINER 文件，按 tag 分类
-          tags=$(echo "$maintainer_content" | grep -oP 'tag: \K\w+')
+          # 逐行解析 MAINTAINER 文件
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
+              tag="${BASH_REMATCH[1]}"
+              echo "Processing tag: $tag"
 
-          for tag in $tags; do
-            # 获取对应的 path 和 reviewers
-            paths=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; print $2}')
-            
-            # 使用 awk 提取 owners 信息，支持多行处理
-            owners=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; getline; print substr($0, index($0,$3))}' | tr -d '\n' | sed 's/ $//')
+              # 读取 path 行
+              read -r path_line
+              if [[ "$path_line" =~ ^path:[[:space:]]+(.*) ]]; then
+                paths="${BASH_REMATCH[1]}"
+              else
+                echo "Error: Invalid path line for tag $tag"
+                continue
+              fi
 
-            # 调试输出：查看解析到的 owners
-            echo "Parsed owners for tag $tag: $owners"
+              # 读取 owners 行
+              read -r owners_line
+              if [[ "$owners_line" =~ ^owners:[[:space:]]+(.*) ]]; then
+                owners="${BASH_REMATCH[1]}"
+              else
+                echo "Error: Invalid owners line for tag $tag"
+                continue
+              fi
 
-            # 如果 tag 已经处理过，则跳过
-            if [[ " $seen_tags " =~ " $tag " ]]; then
-              echo "Tag $tag already processed, skipping."
-              continue
-            fi
+              # 检查是否已处理该 tag
+              if [[ " $seen_tags " =~ " $tag " ]]; then
+                echo "Tag $tag already processed. Skipping."
+                continue
+              fi
 
-            # 处理所有路径
-            for path in $paths; do
-              # 判断修改的文件是否匹配该 path
+              # 检查是否有文件匹配路径
+              file_matched=false
               for file in $changed_files; do
-                if [[ "$file" == $path* ]]; then
-                  # 提取所有 GitHub 用户名并格式化为 @github_id
-                  reviewers=$(echo "$owners" | sed -E 's/([a-zA-Z0-9_-]+)\(.*\)<.*>/@\1/g' | tr '\n' ' ' | sed 's/ $//')
-
-                  # 打印调试信息
-                  echo "Reviewers for tag $tag: $reviewers"
-
-                  timestamp=$(date +'%Y-%m-%d %H:%M:%S')
-                  comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
-
-                  # 记录已经处理的 tag
-                  seen_tags="$seen_tags $tag"
+                if [[ "$file" == $paths* ]]; then
+                  file_matched=true
                   break
                 fi
               done
-            done
-          done
 
-          echo "comment_msg=$comment_msg" >> $GITHUB_ENV  # 保存评论内容到环境变量中
+              if [ "$file_matched" = true ]; then
+                # 解析 owners 列表
+                reviewers=""
+                IFS=',' read -ra owner_entries <<< "$owners"
+                for entry in "${owner_entries[@]}"; do
+                  entry_clean=$(echo "$entry" | xargs)  # 去除前后空格
+                  github_user=$(echo "$entry_clean" | sed -E 's/^([a-zA-Z0-9_-]+)\(.*/\1/')
+                  reviewers+="@$github_user "
+                done
+
+                # 去重
+                reviewers=$(echo "$reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+
+                timestamp=$(date +'%Y-%m-%d %H:%M:%S')
+                comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\nTag: $tag\nPlease review changes related to this tag.\n\n"
+                seen_tags="$seen_tags $tag"
+              fi
+            fi
+          done <<< "$maintainer_content"
+
+          echo "comment_msg=$comment_msg" >> $GITHUB_ENV
 
       - name: Post comment on the PR
         if: env.comment_msg != ''
