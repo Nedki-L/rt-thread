@@ -45,7 +45,10 @@ jobs:
           # Convert the modified files string into an array
           MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
 
-          echo "Initialize variables"
+          echo "DEBUG: MODIFIED_FILES=${MODIFIED_FILES}"
+          for file in "${MODIFIED_FILES_ARRAY[@]}"; do
+              echo "DEBUG: Checking file: $file"
+          done
 
           # Read the MAINTAINER.json file and parse each tag's information
           jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
@@ -54,18 +57,23 @@ jobs:
             path=$(echo $tag_info | jq -r '.path')
             owners=$(echo $tag_info | jq -r '.owner')
 
-            echo "Processing tag: $tag, path: $path, owners: $owners"
+            # Normalize the path to remove the leading slash
+            normalized_path=$(echo $path | sed 's/^\///')
+
+            echo "Processing tag: $tag, path: $path (normalized: $normalized_path), owners: $owners"
 
             # Check if any modified file matches the path (flexible matching)
             matching_files=()
             for file in "${MODIFIED_FILES_ARRAY[@]}"; do
               # Check if the file path starts with the specified tag's path
-              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
+              if [[ "$file" == $normalized_path/* ]] || [[ "$file" == $normalized_path ]]; then
                 matching_files+=("$file")
               fi
             done
 
             if [ ${#matching_files[@]} -gt 0 ]; then
+              echo "Files matching tag $tag: ${matching_files[*]}"
+
               # Collect reviewers for this tag
               IFS=', ' read -r -a owner_array <<< "$owners"
               reviewers=""
