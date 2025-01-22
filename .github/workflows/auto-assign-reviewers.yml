@@ -69,6 +69,9 @@ jobs:
           # 初始化空的评论内容
           comment_msg=""
 
+          # 用于避免重复通知的 tag 列表
+          seen_tags=""
+
           # 解析 MAINTAINER 文件，按 tag 分类
           tags=$(echo "$maintainer_content" | grep -oP 'tag: \K\w+')
 
@@ -82,18 +85,13 @@ jobs:
             # 调试输出：查看解析到的 owners
             echo "Parsed owners for tag $tag: $owners"
 
-            # 用于避免重复通知的 tag 列表
-            seen_tags=""
-            
             # 如果 tag 已经处理过，则跳过
             if [[ " $seen_tags " =~ " $tag " ]]; then
               echo "Tag $tag already processed, skipping."
               continue
             fi
-            
-            # 记录已经处理的 tag
-            seen_tags="$seen_tags $tag"
 
+            # 处理所有路径
             for path in $paths; do
               # 判断修改的文件是否匹配该 path
               for file in $changed_files; do
@@ -106,13 +104,16 @@ jobs:
 
                   timestamp=$(date +'%Y-%m-%d %H:%M:%S')
                   comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
+
+                  # 记录已经处理的 tag
+                  seen_tags="$seen_tags $tag"
+                  break
                 fi
               done
             done
           done
 
           echo "comment_msg=$comment_msg" >> $GITHUB_ENV  # 保存评论内容到环境变量中
-
 
       - name: Post comment on the PR
         if: env.comment_msg != ''
