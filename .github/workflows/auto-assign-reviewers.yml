@@ -31,89 +31,46 @@ jobs:
           echo "Modified files: $PR_FILES"
           echo "modified_files=$PR_FILES" >> $GITHUB_ENV
 
-      # Step 4: Read and parse MAINTAINER.json
-      - name: Read MAINTAINER.json
-        id: read-maintenancer-json
+      # Step 4: Parse MAINTAINER.json and check file tags
+      - name: Parse MAINTAINER.json and determine reviewers
+        id: parse-maintenancer-json
         run: |
-          echo "Reading MAINTAINER.json"
-          if [[ -f "MAINTAINER.json" ]]; then
-            echo "Successfully read MAINTAINER.json."
-            MAINTAINERS=$(cat MAINTAINER.json)
-            echo "MAINTAINERS=$MAINTAINERS" >> $GITHUB_ENV
-          else
-            echo "MAINTAINER.json not found"
-            exit 1
-          fi
+          echo "Parsing MAINTAINER.json and determining reviewers..."
 
-      # Step 5: Determine reviewers based on modified files
-      - name: Determine reviewers
-        id: determine-reviewers
-        run: |
-          echo "Determining reviewers based on modified files..."
+          # Loop through each modified file and determine the tags and reviewers
           MODIFIED_FILES="${{ env.modified_files }}"
-          MAINTAINERS="${{ env.MAINTAINERS }}"
-          
-          # Initialize reviewer list
-          declare -A reviewer_map
 
-          # Loop through each modified file and check which tag it belongs to
-          for file in $MODIFIED_FILES; do
-            echo "Checking file: $file"
-            
-            # For each maintainer entry, check if file matches the path
-            for tag_info in $(echo "$MAINTAINERS" | jq -r '.[] | @base64'); do
-              _jq() {
-                echo ${tag_info} | base64 --decode | jq -r ${1}
-              }
-              
-              tag=$(_jq '.tag')
-              path=$(_jq '.path')
-              owners=$(_jq '.owner')
-              
-              # Check if the modified file path matches any tag path
+          # Parse MAINTAINER.json and loop through each entry
+          while IFS= read -r tag_info; do
+            tag=$(echo $tag_info | jq -r '.tag')
+            path=$(echo $tag_info | jq -r '.path')
+            owners=$(echo $tag_info | jq -r '.owner')
+
+            # Check if any modified file matches the path
+            for file in $MODIFIED_FILES; do
               if [[ "$file" == $path* ]]; then
                 echo "File $file matches tag $tag"
                 
-                # Add reviewers to the map for this tag
-                IFS=', ' read -r -a owners_array <<< "$owners"
-                for owner in "${owners_array[@]}"; do
-                  reviewer_map[$tag]+="@$(echo $owner | cut -d'(' -f1)"
+                # Collect reviewers for this tag
+                IFS=', ' read -r -a owner_array <<< "$owners"
+                for owner in "${owner_array[@]}"; do
+                  reviewer_list="$reviewer_list @$(echo $owner | cut -d'(' -f1) "
                 done
               fi
             done
-          done
+          done < <(jq -c '.[]' MAINTAINER.json)  # Read each element from MAINTAINER.json
 
-          # Prepare final reviewer output
-          reviewers=""
-          for tag in "${!reviewer_map[@]}"; do
-            reviewers+="${reviewer_map[$tag]} "
-          done
+          # Set the reviewers as an output variable
+          echo "reviewers=$reviewer_list" >> $GITHUB_ENV
+          echo "Reviewers determined: $reviewer_list"
 
-          echo "reviewers=$reviewers" >> $GITHUB_ENV
-          echo "Reviewers determined: $reviewers"
-
-      # Step 6: Update or create CI review comment
+      # Step 5: Create or update CI review comment
       - name: Create or update CI comment
         run: |
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
           COMMENT_BODY="Timestamp: $TIMESTAMP\n\nReviewer: ${{ env.reviewers }}\n\n"
           
-          # Iterate over maintainers to build comment content for each tag
-          for tag_info in $(echo ${{ env.MAINTAINERS }} | jq -r '.[] | @base64'); do
-            _jq() {
-              echo ${tag_info} | base64 --decode | jq -r ${1}
-            }
-
-            tag=$(_jq '.tag')
-            owners=$(_jq '.owner')
-
-            # Check if the current tag has any reviewer
-            if [[ "$reviewers" == *"@$tag"* ]]; then
-              COMMENT_BODY+="Tag: $tag\nPlease take a review of this tag\n\n"
-            fi
-          done
-
-          # Fetch existing comments and update
+          # Fetch existing comments and update if necessary
           PR_NUMBER=${{ github.event.pull_request.number }}
           COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
           
