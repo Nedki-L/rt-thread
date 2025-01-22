@@ -89,9 +89,6 @@ jobs:
                   # 提取所有 GitHub 用户名并格式化为 @github_id
                   reviewers=$(echo "$owners" | sed -E 's/([a-zA-Z0-9_-]+)\(.*\)<.*>/@\1/g' | tr '\n' ' ' | sed 's/ $//')
 
-                  # 打印调试信息
-                  echo "Reviewers for tag $tag: $reviewers"
-
                   timestamp=$(date +'%Y-%m-%d %H:%M:%S')
                   comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
                 fi
