@@ -1,56 +1,74 @@
-#
-# Copyright (c) 2006-2024, RT-Thread Development Team
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-# Change Logs:
-# Date           Author       Notes
-# 2024-07-19     supperthomas the first version
-#
-name:  action_runner
+name: action_runner
 
 on:
-  workflow_dispatch:
-    inputs:
-      bsp_options:
-        description: 'Which bsp path Would you want dist in bsp?like stm32/stm32f103-blue-pill'
-        required: false
-        type: string
-        default: 'stm32/stm32f103-blue-pill'
-      bsp_tool_chain:
-        description: 'Choice tool_chain'
-        required: false
-        default: 'KEIL'
-        type: choice
-        options:
-          - "KEIL"
-          - "IAR"
-      bsp_config:
-        description: 'Type a config you want mannual test in .config, like: CONFIG_RT_USING_DEBUG=y,CONFIG_RT_DEBUGING_COLOR=y,CONFIG_RT_DEBUGING_CONTEXT=y'
-        required: false
-        type: string
-        default: 'CONFIG_RT_USING_DEBUG=y,CONFIG_RT_DEBUGING_COLOR=y,CONFIG_RT_DEBUGING_CONTEXT=y'
-
-permissions:
-  contents: read
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
-  build:
-    runs-on: [self-hosted, windows, x64]
-    name: ${{ github.event.inputs.bsp_options }}
+  review-pr:
+    runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
-      - name: Bsp Scons Compile
-        if: ${{ success() }}
-        env:
-          RTT_BSP: ${{ github.event.inputs.bsp_options }}
-          RTT_TOOL_CHAIN: ${{ github.event.inputs.bsp_tool_chain}}
-        run: |   
-          ls
-          echo $RTT_BSP
-          cd bsp/stm32/stm32f103-blue-pill
-          scons --target=mdk5
-          UV4.exe -b project.uvprojx -q -j0 -t rt-thread -o action_runner.log
-          ls
-          sleep 10
-          cat action_runner.log
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Node.js (for JSON parsing)
+      uses: actions/setup-node@v2
+      with:
+        node-version: '14'
+
+    - name: Parse MAINTAINER.json and get affected owners
+      run: |
+        # Load MAINTAINER.json and parse it
+        maintainer_json=$(cat MAINTAINER.json)
+        
+        # Get list of modified files in the PR
+        pr_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+        
+        # Parse the MAINTAINER.json to create a mapping of path to owners
+        declare -A tag_owners
+
+        for entry in $(echo "$maintainer_json" | jq -r '.[] | @base64'); do
+          _jq() {
+            echo ${entry} | base64 --decode | jq -r ${1}
+          }
+
+          tag=$(echo "$entry" | _jq '.tag')
+          path=$(echo "$entry" | _jq '.path')
+          owners=$(echo "$entry" | _jq '.owners')
+
+          # Convert owners into GitHub IDs
+          owner_github_ids=$(echo "$owners" | sed -E 's/.*\(([^)]+)\)<.*>/@\1/g')
+
+          tag_owners["$path"]="$tag_owners[$path] $owner_github_ids"
+        done
+
+        # Check which tag needs to be triggered based on modified files
+        affected_tags=()
+        for file in $pr_files; do
+          for path in "${!tag_owners[@]}"; do
+            if [[ $file == $path* ]]; then
+              affected_tags+=("${tag_owners[$path]}")
+            fi
+          done
+        done
+
+        # If affected tags found, prepare the comment
+        if [ ${#affected_tags[@]} -gt 0 ]; then
+          tags_unique=$(echo "${affected_tags[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          
+          # Format and send the comment
+          pr_number=${{ github.event.pull_request.number }}
+          comment_body="timestamp: $(date)
+          
+Reviewer: ${tags_unique}
+
+Modified files:
+$(echo "$pr_files")"
+
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"body":"'"$comment_body"'"}' \
+            "https://api.github.com/repos/${{ github.repository }}/issues/$pr_number/comments"
+        fi

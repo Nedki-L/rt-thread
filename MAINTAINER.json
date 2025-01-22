@@ -1,17 +1,17 @@
 [
-    {
-        "tag": "BSP: stm32",
-        "path": "/bsp/stm32/", 
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>"
-    },
-    {
-        "tag": "kernel: memory",
-        "path": "/src/",
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>"
-    },
-    {
-        "tag": "workflow",
-        "path": "/.github/workflows/",
-        "owner": "Wang Yuqiang (kurisaW) <2053731441@qq.com>, kkk (KurisaW-Collaborative) <2053731441@qq.com>, kkk (Nedki-L) <2053731441@qq.com>"
-    }
+  {
+    "tag": "stm32",
+    "path": "bsp/stm32",
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>"
+  },
+  {
+    "tag": "kernel",
+    "path": "kernel",
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>"
+  },
+  {
+    "tag": "workflow",
+    "path": "workflow",
+    "owner": "reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>, reviewer3(KurisaW-Collaborative)<reviewer3@example.com>"
+  }
 ]
