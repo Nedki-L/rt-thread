@@ -59,30 +59,55 @@ jobs:
         run: |
           # 读取保存的 MAINTAINER 内容
           maintainer_content=$(cat maintainer_content.txt)
-          
+
+          # 打印 MAINTAINER 内容，检查格式
+          echo "MAINTAINER content: $maintainer_content"
+
           # 读取修改的文件路径
           changed_files=$(cat changed_files.txt)
 
           # 初始化空的评论内容
           comment_msg=""
 
+          # 用于避免重复通知的 tag 列表
+          seen_tags=""
+
           # 解析 MAINTAINER 文件，按 tag 分类
           tags=$(echo "$maintainer_content" | grep -oP 'tag: \K\w+')
 
           for tag in $tags; do
             # 获取对应的 path 和 reviewers
-            paths=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'path:' | awk '{print $2}')
-            owners=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'owners:' | sed 's/owners: //')
+            paths=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; print $2}')
+            
+            # 使用 awk 提取 owners 信息，支持多行处理
+            owners=$(echo "$maintainer_content" | awk -v tag="$tag" '$0 ~ "tag: " tag {getline; getline; print substr($0, index($0,$3))}')
 
+            # 调试输出：查看解析到的 owners
+            echo "Parsed owners for tag $tag: $owners"
+
+            # 如果 tag 已经处理过，则跳过
+            if [[ " $seen_tags " =~ " $tag " ]]; then
+              echo "Tag $tag already processed, skipping."
+              continue
+            fi
+
+            # 处理所有路径
             for path in $paths; do
               # 判断修改的文件是否匹配该 path
               for file in $changed_files; do
                 if [[ "$file" == $path* ]]; then
-                  # 生成评论内容
                   # 提取所有 GitHub 用户名并格式化为 @github_id
-                  reviewers=$(echo "$owners" | sed 's/,/ @/g' | sed 's/^/@/')
+                  reviewers=$(echo "$owners" | sed -E 's/([a-zA-Z0-9_-]+)\(.*\)<.*>/@\1/g' | tr '\n' ' ' | sed 's/ $//')
+
+                  # 打印调试信息
+                  echo "Reviewers for tag $tag: $reviewers"
+
                   timestamp=$(date +'%Y-%m-%d %H:%M:%S')
                   comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
+
+                  # 记录已经处理的 tag
+                  seen_tags="$seen_tags $tag"
+                  break
                 fi
               done
             done
