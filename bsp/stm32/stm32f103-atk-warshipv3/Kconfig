@@ -12,7 +12,7 @@ config SOC_STM32F103ZE
     select RT_USING_COMPONENTS_INIT
     select RT_USING_USER_MAIN
     default y
-
+dsada
 source "$(RTT_DIR)/Kconfig"
 osource "$PKGS_DIR/Kconfig"
 rsource "../libraries/Kconfig"
