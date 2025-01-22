@@ -48,16 +48,17 @@ jobs:
         id: generate_review_step
         run: |
           changed_files=$(cat changed_files.txt)
-          rm -f review_data.md
+          rm -f review_data.md triggered_reviewers.txt
           
           # 初始化评论内容
           echo "## 📌 Code Ownership Review Request" > review_data.md
           echo "" >> review_data.md
           
-          # 生成标签块
+          # 生成标签块并记录实际触发审核者
           while IFS='|' read -r tag path reviewers; do
             matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
             if [[ -n "$matched_files" ]]; then
+              # 写入标签块
               {
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
@@ -70,29 +71,39 @@ jobs:
                 echo "</details>"
                 echo ""
               } >> review_data.md
+              
+              # 记录当前标签的审核者（关键修复）
+              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
             fi
           done < tag_data.csv
       
-          # 动态生成审核者列表（关键修复）
-          awk -F'|' '{print $3}' tag_data.csv | 
-          tr ' ' '\n' | 
-          awk 'NF && !seen[$0]++' |  # 过滤空行并去重
-          sed 's/[[:space:]]*$//' > reviewers.txt  # 去除行尾空格
-          
-          # 添加审核进度跟踪模块
-          if [[ -s reviewers.txt ]]; then
-            {
-              echo "---"
-              echo "### 📝 Review Progress"
-              echo "Click checkboxes to mark completion:"
-              while IFS= read -r reviewer; do
-                echo "- [ ] ${reviewer}"
-              done < reviewers.txt
-              echo ""
-              echo "*Note: Checkboxes are interactive in GitHub comments.*"
-            } >> review_data.md
+          # 动态生成审核者列表（仅包含实际触发人员）
+          if [[ -f triggered_reviewers.txt ]]; then
+            awk '!seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt  # 去重并保留顺序
+            
+            # 添加审核进度模块
+            if [[ -s unique_reviewers.txt ]]; then
+              {
+                echo "---"
+                echo "### 📝 Review Progress"
+                echo "Click checkboxes to mark completion:"
+                while read -r reviewer; do
+                  [[ -n "$reviewer" ]] && echo "- [ ] $reviewer"
+                done < unique_reviewers.txt
+                echo ""
+                echo "*Note: Checkboxes are interactive in GitHub comments.*"
+              } >> review_data.md
+            fi
           fi
       
+          # 设置环境变量
+          if [[ -s review_data.md ]]; then
+            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
+            echo "📝 Generated review data:"
+            cat review_data.md
+          else
+            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
+          fi
           # 设置环境变量
           if [[ -s review_data.md ]]; then
             echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
