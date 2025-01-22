@@ -74,6 +74,8 @@ jobs:
             paths=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'path:' | awk '{print $2}')
             owners=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'owners:' | sed 's/owners: //')
 
+            echo "Parsed owners for tag $tag: $owners"
+
             for path in $paths; do
               # 判断修改的文件是否匹配该 path
               for file in $changed_files; do
