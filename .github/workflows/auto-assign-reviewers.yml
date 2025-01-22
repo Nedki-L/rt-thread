@@ -66,6 +66,8 @@ jobs:
 
       # Step 5: Create or update CI review comment
       - name: Create or update CI comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
         run: |
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
           COMMENT_BODY="Timestamp: $TIMESTAMP\n\nReviewer: ${{ env.reviewers }}\n\n"
