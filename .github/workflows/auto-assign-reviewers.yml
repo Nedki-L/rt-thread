@@ -68,6 +68,9 @@ jobs:
             done
           done < <(jq -c '.[]' MAINTAINER.json)  # Read each element from MAINTAINER.json
 
+          # Debug: Print the comment body for review
+          echo "Generated COMMENT_BODY: $COMMENT_BODY"
+
           # Set the reviewers and comment body as output variables
           echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
           echo "Reviewers determined: $COMMENT_BODY"
@@ -79,6 +82,12 @@ jobs:
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           COMMENT_BODY="${{ env.comment_body }}"
+
+          # Check if COMMENT_BODY is empty before proceeding
+          if [[ -z "$COMMENT_BODY" ]]; then
+            echo "No relevant files modified, skipping comment creation."
+            exit 0
+          fi
 
           # Fetch existing comments and check if a CI bot comment exists
           COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
