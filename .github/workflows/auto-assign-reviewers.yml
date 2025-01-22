@@ -128,8 +128,7 @@ name: PR Review Based on Maintainers
 
 on:
   pull_request:
-    paths:
-      - '**/*'  # Trigger on any file changes
+    types: [opened, synchronize, reopened]
 
 jobs:
   review-pr:
