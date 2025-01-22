@@ -39,7 +39,8 @@ jobs:
           if [[ -f "MAINTAINER.json" ]]; then
             echo "Successfully read MAINTAINER.json."
             cat MAINTAINER.json
-            maintainers=$(cat MAINTAINER.json)
+            # Parse and extract maintainers' info into individual variables
+            maintainers=$(cat MAINTAINER.json | jq -r '.[] | {tag: .tag, path: .path, owner: .owner}')
             echo "maintainers=$maintainers" >> $GITHUB_ENV
           else
             echo "MAINTAINER.json not found"
@@ -56,20 +57,22 @@ jobs:
           
           # Initialize reviewer list
           declare -A reviewer_map
-          
+
+          # Loop through each modified file and check which tag it belongs to
           for file in $MODIFIED_FILES; do
             echo "Checking file: $file"
-            for tag_info in $(echo $MAINTAINERS | jq -r '.[] | @base64'); do
+            
+            # For each maintainer entry, check if file matches the path
+            for tag_info in $(echo "$MAINTAINERS" | jq -r '.[] | @base64'); do
               _jq() {
                 echo ${tag_info} | base64 --decode | jq -r ${1}
               }
               
-              # Extract data from MAINTAINER.json
               tag=$(_jq '.tag')
               path=$(_jq '.path')
               owners=$(_jq '.owner')
               
-              # Check if file is part of this tag's path
+              # Check if the modified file path matches any tag path
               if [[ "$file" == $path* ]]; then
                 echo "File $file matches tag $tag"
                 
@@ -89,6 +92,7 @@ jobs:
           done
 
           echo "reviewers=$reviewers" >> $GITHUB_ENV
+          echo "Reviewers determined: $reviewers"
 
       # Step 6: Update or create CI review comment
       - name: Create or update CI comment
