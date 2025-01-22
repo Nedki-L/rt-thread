@@ -37,10 +37,12 @@ jobs:
         run: |
           echo "Parsing MAINTAINER.json and determining reviewers..."
 
-          # Loop through each modified file and determine the tags and reviewers
+          # Initialize variables
           MODIFIED_FILES="${{ env.modified_files }}"
+          REVIEWERS_LIST=""
+          COMMENT_BODY=""
 
-          # Parse MAINTAINER.json and loop through each entry
+          # Loop through each tag in MAINTAINER.json and check the modified files
           while IFS= read -r tag_info; do
             tag=$(echo $tag_info | jq -r '.tag')
             path=$(echo $tag_info | jq -r '.path')
@@ -53,36 +55,41 @@ jobs:
                 
                 # Collect reviewers for this tag
                 IFS=', ' read -r -a owner_array <<< "$owners"
+                reviewers=""
                 for owner in "${owner_array[@]}"; do
-                  reviewer_list="$reviewer_list @$(echo $owner | cut -d'(' -f1) "
+                  reviewer="@$(echo $owner | cut -d'(' -f1)"
+                  reviewers="$reviewers $reviewer"
                 done
+
+                # Prepare the comment for this tag
+                TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
+                COMMENT_BODY+="\nTimestamp: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
               fi
             done
           done < <(jq -c '.[]' MAINTAINER.json)  # Read each element from MAINTAINER.json
 
-          # Set the reviewers as an output variable
-          echo "reviewers=$reviewer_list" >> $GITHUB_ENV
-          echo "Reviewers determined: $reviewer_list"
+          # Set the reviewers and comment body as output variables
+          echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
+          echo "Reviewers determined: $COMMENT_BODY"
 
       # Step 5: Create or update CI review comment
       - name: Create or update CI comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
         run: |
-          TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-          COMMENT_BODY="Timestamp: $TIMESTAMP\n\nReviewer: ${{ env.reviewers }}\n\n"
-          
-          # Fetch existing comments and update if necessary
           PR_NUMBER=${{ github.event.pull_request.number }}
+          COMMENT_BODY="${{ env.comment_body }}"
+
+          # Fetch existing comments and check if a CI bot comment exists
           COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
           
           # Check if there's an existing CI bot comment
           EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
 
           if [[ -n "$EXISTING_COMMENT" ]]; then
-            echo "Updating existing comment."
+            echo "Updating existing CI bot comment."
             gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
           else
-            echo "Creating new comment."
+            echo "Creating new CI bot comment."
             gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
           fi
