@@ -1,124 +1,114 @@
-name: PR Review Commenter
+name: Assign Reviewers Based on Maintainer File
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]  # 当PR打开、更新或重新打开时触发
+    types: [opened, synchronize, reopened]
 
 jobs:
-  review-comment:
+  assign-reviewers:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout repository
+      - name: Checkout the code
         uses: actions/checkout@v3
 
-      # Step 2: Install necessary dependencies
-      - name: Install jq and GitHub CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq gh curl
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
 
-      # Step 3: Fetch modified files from the PR
-      - name: Fetch modified files for the PR
-        id: fetch-pr-files
-        run: |
-          echo "Fetching modified files for the PR..."
-          PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            | jq -r '.[].filename' | tr '\n' ' ')
-          
-          echo "Modified files: $PR_FILES"
-          echo "modified_files=$PR_FILES" >> $GITHUB_ENV
+      - name: Install dependencies
+        run: pip install PyYAML requests
 
-      # Step 4: Parse MAINTAINER.json and check file tags
-      - name: Parse MAINTAINER.json and determine reviewers
-        id: parse-maintenancer-json
-        run: |
-          echo "Parsing MAINTAINER.json and determining reviewers..."
-
-          # Initialize variables
-          MODIFIED_FILES="${{ env.modified_files }}"
-          REVIEWERS_LIST=""
-          COMMENT_BODY=""
-          
-          # Convert the modified files string into an array
-          MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
-
-          echo "Initialize variables"
-
-          # Read the MAINTAINER.json file and parse each tag's information
-          jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
-            # Extract tag, path, and owner information from the JSON
-            tag=$(echo $tag_info | jq -r '.tag')
-            path=$(echo $tag_info | jq -r '.path')
-            owners=$(echo $tag_info | jq -r '.owner')
-
-            echo "Processing tag: $tag, path: $path, owners: $owners"
-
-            # Check if any modified file matches the path (flexible matching)
-            matching_files=()
-            for file in "${MODIFIED_FILES_ARRAY[@]}"; do
-              # Check if the file path starts with the specified tag's path
-              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
-                matching_files+=("$file")
-              fi
-            done
-
-            if [ ${#matching_files[@]} -gt 0 ]; then
-              # Collect reviewers for this tag
-              IFS=', ' read -r -a owner_array <<< "$owners"
-              reviewers=""
-              for owner in "${owner_array[@]}"; do
-                reviewer="@$(echo $owner | cut -d'(' -f1)"
-                reviewers="$reviewers $reviewer"
-              done
-
-              # Prepare the comment for this tag
-              TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-              COMMENT_BODY+="\nTimeout: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
-            else
-              echo "No files match tag $tag"
-            fi
-          done
-
-          # Debug: Print the comment body for review
-          echo "Generated COMMENT_BODY: $COMMENT_BODY"
-
-          # Check if COMMENT_BODY is empty
-          if [[ -z "$COMMENT_BODY" ]]; then
-            echo "No relevant files modified, skipping comment creation."
-            exit 0
-          fi
-
-          # Set the reviewers and comment body as output variables
-          echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
-          echo "Reviewers determined: $COMMENT_BODY"
-
-      # Step 5: Create or update CI review comment
-      - name: Create or update CI comment
+      - name: Parse Maintainer and Assign Reviewers
+        id: parse-maintainer
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ env.comment_body }}"
+          import os
+          import requests
+          from datetime import datetime
 
-          # Check if COMMENT_BODY is empty before proceeding
-          if [[ -z "$COMMENT_BODY" ]]; then
-            echo "No relevant files modified, skipping comment creation."
-            exit 0
-          fi
-
-          # Fetch existing comments and check if a CI bot comment exists
-          COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
+          # Load the MAINTAINER file
+          MAINTAINER_FILE = "MAINTAINER"
           
-          # Check if there's an existing CI bot comment
-          EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
+          if not os.path.exists(MAINTAINER_FILE):
+              raise FileNotFoundError(f"{MAINTAINER_FILE} not found in the repository.")
 
-          if [[ -n "$EXISTING_COMMENT" ]]; then
-            echo "Updating existing CI bot comment."
-            gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
-          else
-            echo "Creating new CI bot comment."
-            gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
-          fi
+          with open(MAINTAINER_FILE, "r") as f:
+              maintainer_data = f.read()
+
+          # Parse the MAINTAINER file
+          def parse_maintainer(content):
+              tags = []
+              for section in content.strip().split("\n\n"):
+                  lines = section.strip().split("\n")
+                  tag = lines[0].split(":")[1].strip()
+                  path = lines[1].split(":")[1].strip()
+                  owners_raw = lines[2].split(":")[1].strip()
+                  owners = [owner.split("(")[0].strip() for owner in owners_raw.split(",")]
+                  tags.append({"tag": tag, "path": path, "owners": owners})
+              return tags
+
+          maintainer_tags = parse_maintainer(maintainer_data)
+
+          # Get the PR files using GitHub API
+          repo = os.getenv("GITHUB_REPOSITORY")
+          pr_number = os.getenv("GITHUB_REF").split("/")[-2]
+          api_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
+          headers = {"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"}
+
+          response = requests.get(api_url, headers=headers)
+          response.raise_for_status()
+          pr_files = response.json()
+
+          # Extract the modified file paths
+          modified_files = [file["filename"] for file in pr_files]
+
+          # Match files to tags and reviewers
+          triggered_tags = {}
+          for file in modified_files:
+              for tag_info in maintainer_tags:
+                  path = tag_info["path"]
+                  if file.startswith(path):  # Match file path recursively
+                      tag = tag_info["tag"]
+                      if tag not in triggered_tags:
+                          triggered_tags[tag] = {"paths": set(), "owners": set(tag_info["owners"])}
+                      triggered_tags[tag]["paths"].add(file)
+
+          # Generate the comment content
+          timestamp = datetime.utcnow().isoformat()
+          comment_lines = []
+          for tag, data in triggered_tags.items():
+              reviewer_mentions = " ".join([f"@{owner}" for owner in data["owners"]])
+              file_list = "\n".join(data["paths"])
+              comment_lines.append(
+                  f"Timestamp: {timestamp}\nReviewer: {reviewer_mentions}\n\nTag: {tag}\nPlease take a review of this tag\nAffected files:\n{file_list}\n"
+              )
+
+          comment_body = "\n---\n".join(comment_lines)
+
+          # Save the comment content to a file
+          with open("comment_msg.txt", "w") as comment_file:
+              comment_file.write(comment_body)
+
+          # Output the comment for the next step
+          print(f"::set-output name=comment_body::{comment_body}")
+
+      - name: Upload Comment to PR
+        if: steps.parse-maintainer.outputs.comment_body != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMENT_BODY=$(<comment_msg.txt)
+          PAYLOAD=$(echo '{}' | jq --arg body "$COMMENT_BODY" '.body = $body')
+          PR_NUMBER=$(echo "${{ github.event.pull_request.number }}")
+          curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+
+      - name: Save Comment Locally
+        if: steps.parse-maintainer.outputs.comment_body != ''
+        run: cat comment_msg.txt
