@@ -7,6 +7,9 @@ on:
 jobs:
   assign-reviewers:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -18,7 +21,6 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
-          # 过滤掉 MAINTAINER 文件自身
           filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
           echo "$filtered_files" > changed_files.txt
           echo "Changed files:"
@@ -27,13 +29,8 @@ jobs:
       - name: Parse MAINTAINER file
         id: parse_maintainer
         run: |
-          # 读取 MAINTAINER 文件内容
           maintainer_content=$(cat MAINTAINER)
-          echo "$maintainer_content" > maintainer_content.txt
-
-          # 解析每个 tag 的 path 和 owners
           tag_data=""
-          current_tag=""
           while IFS= read -r line; do
             if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
               current_tag="${BASH_REMATCH[1]}"
@@ -41,12 +38,10 @@ jobs:
               path="${BASH_REMATCH[1]}"
             elif [[ "$line" =~ ^owners:[[:space:]]+(.*) ]]; then
               owners="${BASH_REMATCH[1]}"
-              # 将 owners 转换为 GitHub ID 列表
-              github_ids=$(echo "$owners" | sed -E 's/[^,]*(\([^)]+\))[^,]*/@\1/g' | tr -d '()' | tr ',' ' ')
+              github_ids=$(echo "$owners" | sed -E 's/[^,]*\(([^)]+)\).*?/@\1/g' | tr ',' ' ' | xargs)
               tag_data+="$current_tag|$path|$github_ids\n"
             fi
           done <<< "$maintainer_content"
-
           echo -e "$tag_data" > tag_data.txt
           echo "Parsed tag data:"
           cat tag_data.txt
@@ -56,27 +51,21 @@ jobs:
         run: |
           changed_files=$(cat changed_files.txt)
           tag_data=$(cat tag_data.txt)
-
           required_reviewers=""
-          declare -A processed_tags  # 用于去重
-
+          declare -A processed_tags
           while IFS='|' read -r tag path github_ids; do
-            # 检查是否已处理该 tag
+            [[ -z "$tag" ]] && continue
             if [[ -n "${processed_tags[$tag]}" ]]; then
               continue
             fi
-
-            # 检查是否有文件匹配 path
             for file in $changed_files; do
-              if [[ "$file" == $path* ]]; then
+              if [[ "$file" == $path/* || "$file" == $path ]]; then
                 required_reviewers+="$github_ids "
                 processed_tags["$tag"]=1
                 break
               fi
             done
           done <<< $(echo -e "$tag_data" | grep -v '^$')
-
-          # 去重并格式化
           required_reviewers=$(echo "$required_reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
           echo "REVIEWERS=$required_reviewers" >> $GITHUB_ENV
           echo "Final reviewers: $required_reviewers"
@@ -84,14 +73,16 @@ jobs:
       - name: Post comment on the PR
         if: env.REVIEWERS != ''
         run: |
-          comment="📌 **Code Owners Request**\n\nDetected changes in the following areas:\n$(
-            cat tag_data.txt | grep -v '^$' | while IFS='|' read -r tag path _; do
-              echo "- \`$path\` (Tag: **$tag**)"
-            done
-          )\n\nRequired reviewers: ${{ env.REVIEWERS }}"
-          
-          curl -s \
+          comment_body=$(jq -n --arg body "Required reviewers: $REVIEWERS" '{body: $body}')
+          response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
             -X POST \
-            -d "{\"body\": \"$comment\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+            -d "$comment_body" \
+            -w "\nHTTP_STATUS:%{http_code}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          http_status=$(echo "$response" | grep 'HTTP_STATUS:' | cut -d':' -f2)
+          if [[ "$http_status" != "201" ]]; then
+            echo "Failed to post comment. Status: $http_status"
+            exit 1
+          fi
