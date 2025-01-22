@@ -20,11 +20,9 @@ jobs:
       - name: Install dependencies
         run: pip install PyYAML requests
 
-      - name: Parse Maintainer and Assign Reviewers
-        id: parse-maintainer
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Write Python script for maintainer parsing
         run: |
+          echo '''
           import os
           import requests
           from datetime import datetime
@@ -41,8 +39,8 @@ jobs:
           # Parse the MAINTAINER file
           def parse_maintainer(content):
               tags = []
-              for section in content.strip().split("\n\n"):
-                  lines = section.strip().split("\n")
+              for section in content.strip().split("\\n\\n"):
+                  lines = section.strip().split("\\n")
                   tag = lines[0].split(":")[1].strip()
                   path = lines[1].split(":")[1].strip()
                   owners_raw = lines[2].split(":")[1].strip()
@@ -83,15 +81,19 @@ jobs:
           comment_lines = []
           for tag, data in triggered_tags.items():
               reviewer_mentions = " ".join([f"@{owner}" for owner in data["owners"]])
-              file_list = "\n".join(data["paths"])
+              file_list = "\\n".join(data["paths"])
               comment_lines.append(
-                  f"Timestamp: {timestamp}\nReviewer: {reviewer_mentions}\n\nTag: {tag}\nPlease take a review of this tag\nAffected files:\n{file_list}\n"
+                  f"Timestamp: {timestamp}\\nReviewer: {reviewer_mentions}\\n\\nTag: {tag}\\nPlease take a review of this tag\\nAffected files:\\n{file_list}\\n"
               )
 
-          comment_body = "\n---\n".join(comment_lines)
+          comment_body = "\\n---\\n".join(comment_lines)
 
           # Set the comment body for the next step
           print(f"::set-output name=comment_body::{comment_body}")
+          ''' > parse_maintainer.py
+
+      - name: Run Python script to parse maintainers and assign reviewers
+        run: python3 parse_maintainer.py
 
       - name: Install jq (for JSON parsing)
         run: sudo apt-get install -y jq
