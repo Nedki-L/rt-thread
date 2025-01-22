@@ -50,20 +50,15 @@ jobs:
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md
           
-          # 生成评论头部
+          # 初始化评论内容（仅包含一个标题）
           echo "## 📌 Code Ownership Review Request" > review_data.md
+          echo "" >> review_data.md  # 添加标题后的空行
           
           while IFS='|' read -r tag path reviewers; do
-            echo "🔍 Processing tag: $tag"
             matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
-            
             if [[ -n "$matched_files" ]]; then
-              echo "  ✅ Matched files:"
-              echo "$matched_files" | sed 's/^/    - /'
-              
-              # 生成带间距的Markdown块
+              # 生成规范化的Markdown块
               {
-                echo ""
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
                 echo "**Reviewers:** $reviewers  "
@@ -73,20 +68,15 @@ jobs:
                 echo "$matched_files" | sed 's/^/- /'
                 echo ""
                 echo "</details>"
+                echo ""  # 标签块之间添加空行
               } >> review_data.md
             fi
           done < tag_data.csv
           
-          # 强制设置环境变量
-          if [[ -s review_data.md ]]; then
-            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
-            echo "📝 Generated review data:"
-            cat review_data.md
-          else
-            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-            echo "⚠️ No matching tags found"
-          fi
-
+          # 验证文件内容
+          echo "Generated review_data.md:"
+          cat review_data.md
+          
       - name: Delete old comments
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
@@ -108,10 +98,8 @@ jobs:
       - name: Post structured comment
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          # 直接读取生成的内容（无需处理审核进度）
-          comment_header="## 📌 Code Ownership Review Request\n\n"
-          comment_body=$(cat review_data.md)
-          full_comment="${comment_header}${comment_body}"
+          # 直接读取生成的内容（不再添加额外标题）
+          full_comment=$(cat review_data.md)
           
           # 使用jq安全生成JSON
           comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
@@ -123,11 +111,3 @@ jobs:
             -X POST \
             -d "$comment_json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-          
-          if echo "$response" | grep -q '"message"'; then
-            echo "❌ Error: $(echo "$response" | jq .message)"
-            exit 1
-          else
-            echo "✅ Comment posted successfully!"
-            echo "View comment at: $(echo "$response" | jq .html_url)"
-          fi
