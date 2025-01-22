@@ -26,6 +26,7 @@ jobs:
           
           # 将文件列表保存到一个临时文件
           echo "$filtered_files" > changed_files.txt
+          cat changed_files.txt
           echo "Changed files saved to changed_files.txt."
 
       - name: Save MAINTAINER file to a temporary file
