@@ -1,0 +1,11 @@
+tag: stm32
+path: bsp/stm32
+owners: reviewer1(kurisaW)<reviewer1@example.com>
+
+tag: kernel
+path: src
+owners: reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>
+
+tag: workflow
+path: .github/workflows
+owners: reviewer1(kurisaW)<reviewer1@example.com>, reviewer2(Nedki-L)<reviewer2@example.com>, reviewer3(KurisaW-Collaborative)<reviewer3@example.com>
