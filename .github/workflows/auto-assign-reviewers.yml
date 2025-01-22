@@ -34,7 +34,6 @@ jobs:
         run: |
           echo "Saving MAINTAINER file..."
           cat MAINTAINER > maintainer_content.txt  # 保存 MAINTAINER 内容到临时文件
-          cat maintainer_content.txt
           echo "MAINTAINER content saved."
 
       - name: Delete previous GitHub Action comments
