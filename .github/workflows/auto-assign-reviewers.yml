@@ -38,10 +38,8 @@ jobs:
           echo "Reading MAINTAINER.json"
           if [[ -f "MAINTAINER.json" ]]; then
             echo "Successfully read MAINTAINER.json."
-            cat MAINTAINER.json
-            # Parse and extract maintainers' info into individual variables
-            maintainers=$(cat MAINTAINER.json | jq -r '.[] | {tag: .tag, path: .path, owner: .owner}')
-            echo "maintainers=$maintainers" >> $GITHUB_ENV
+            MAINTAINERS=$(cat MAINTAINER.json)
+            echo "MAINTAINERS=$MAINTAINERS" >> $GITHUB_ENV
           else
             echo "MAINTAINER.json not found"
             exit 1
@@ -53,7 +51,7 @@ jobs:
         run: |
           echo "Determining reviewers based on modified files..."
           MODIFIED_FILES="${{ env.modified_files }}"
-          MAINTAINERS="${{ env.maintainers }}"
+          MAINTAINERS="${{ env.MAINTAINERS }}"
           
           # Initialize reviewer list
           declare -A reviewer_map
@@ -101,7 +99,7 @@ jobs:
           COMMENT_BODY="Timestamp: $TIMESTAMP\n\nReviewer: ${{ env.reviewers }}\n\n"
           
           # Iterate over maintainers to build comment content for each tag
-          for tag_info in $(echo ${{ env.maintainers }} | jq -r '.[] | @base64'); do
+          for tag_info in $(echo ${{ env.MAINTAINERS }} | jq -r '.[] | @base64'); do
             _jq() {
               echo ${tag_info} | base64 --decode | jq -r ${1}
             }
