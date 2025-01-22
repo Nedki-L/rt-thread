@@ -50,7 +50,7 @@ jobs:
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md
           
-          # 生成评论头部（严格控制空行）
+          # 生成评论头部
           echo "## 📌 Code Ownership Review Request" > review_data.md
           
           while IFS='|' read -r tag path reviewers; do
@@ -77,7 +77,7 @@ jobs:
             fi
           done < tag_data.csv
           
-          # 强制设置环境变量（关键修复）
+          # 强制设置环境变量
           if [[ -s review_data.md ]]; then
             echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
             echo "📝 Generated review data:"
@@ -86,12 +86,6 @@ jobs:
             echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
             echo "⚠️ No matching tags found"
           fi
-          
-          # 调试输出当前目录结构
-          echo "::group::Directory Structure"
-          pwd
-          ls -al
-          echo "::endgroup::"
 
       - name: Delete old comments
         if: env.REVIEW_DATA_EXISTS == 'true'
@@ -114,29 +108,13 @@ jobs:
       - name: Post structured comment
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          # 动态生成去重审核者列表（保留原始顺序）
-          reviewers_list=$(awk -F'|' '{print $3}' tag_data.csv | tr ' ' '\n' | awk '!seen[$0]++' | xargs)
-          
-          # 构建评论内容
+          # 直接读取生成的内容（无需处理审核进度）
           comment_header="## 📌 Code Ownership Review Request\n\n"
           comment_body=$(cat review_data.md)
-          progress_section="\n\n---\n### 📝 Review Progress\n"
-          progress_section+="Click checkboxes to mark completion:\n"
+          full_comment="${comment_header}${comment_body}"
           
-          for reviewer in $reviewers_list; do
-            progress_section+="- [ ] ${reviewer}\n"
-          done
-          progress_section+="\n*Note: Checkboxes are interactive in GitHub comments.*"
-          
-          full_comment="${comment_header}${comment_body}${progress_section}"
-          
-          # 使用jq安全生成JSON（自动处理转义）
+          # 使用jq安全生成JSON
           comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
-          
-          # 调试输出
-          echo "::group::Generated JSON Preview"
-          echo "$comment_json"
-          echo "::endgroup::"
           
           # 发送请求
           response=$(curl -s \
@@ -146,7 +124,6 @@ jobs:
             -d "$comment_json" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
-          # 处理响应
           if echo "$response" | grep -q '"message"'; then
             echo "❌ Error: $(echo "$response" | jq .message)"
             exit 1
