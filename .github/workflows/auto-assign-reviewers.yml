@@ -85,13 +85,32 @@ jobs:
       - name: Delete old comments
         if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          echo "::group::Deleting previous comments..."
-          comment_ids=$(
-            curl -s \
+          echo "::group::Cleaning up previous comments..."
+          
+          # 获取所有评论（处理分页）
+          page=1
+          all_comments=""
+          while true; do
+            comments=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" |
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | .id'
-          )
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?per_page=100&page=$page")
+            
+            # 判断是否还有数据
+            if [[ $(echo "$comments" | jq '. | length') -eq 0 ]]; then
+              break
+            fi
+            
+            all_comments+=$(echo "$comments" | jq -c '.[]')
+            ((page++))
+          done
+
+          # 提取需要删除的评论ID
+          comment_ids=$(echo "$all_comments" | jq -r 'select(.user.login == "github-actions[bot]") | .id')
+          
+          echo "Found ${#comment_ids[@]} bot comments to delete"
+          
+          # 删除所有历史评论
           for id in $comment_ids; do
             echo "Deleting comment $id"
             curl -s -X DELETE \
