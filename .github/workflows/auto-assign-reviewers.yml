@@ -22,7 +22,6 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
           
-          # 过滤 MAINTAINER 文件自身修改
           filtered_files=$(echo "$changed_files" | grep -v '^MAINTAINER$')
           echo "$filtered_files" > changed_files.txt
           echo "🔄 Changed files detected:"
@@ -33,67 +32,46 @@ jobs:
         run: |
           echo "📖 Parsing MAINTAINER file..."
           maintainer_content=$(cat MAINTAINER)
-          tag_data=""
-          
-          # 解析逻辑
-          current_tag=""
-          current_path=""
-          while IFS= read -r line; do
-            if [[ "$line" =~ ^tag:[[:space:]]+(.+)$ ]]; then
-              current_tag="${BASH_REMATCH[1]}"
-              echo "  🔍 Found tag: $current_tag"
-            elif [[ "$line" =~ ^path:[[:space:]]+(.+)$ ]]; then
-              current_path="${BASH_REMATCH[1]}"
-              echo "    📁 Path: $current_path"
-            elif [[ "$line" =~ ^owners:[[:space:]]+(.+)$ ]]; then
-              owners="${BASH_REMATCH[1]}"
-              # 提取 GitHub ID（精准匹配括号内容）
-              github_ids=$(echo "$owners" | sed -E 's/[^,(]*\(([^)]+)\)[^,]*/@\1/g' | tr ',' ' ' | xargs)
-              echo "    👥 Owners: $github_ids"
-              tag_data+="${current_tag}|${current_path}|${github_ids}\n"
-            fi
-          done <<< "$maintainer_content"
-          
-          echo -e "$tag_data" > tag_data.txt
-          echo "✅ Parsed tag data:"
-          column -t -s "|" tag_data.txt | sed 's/^/  /'
+          echo -e "tag|path|reviewers\n$(echo "$maintainer_content" | sed -n '/^tag:/{N;N;p}' | sed 'N;s/\n/|/g')" > tag_data.csv
+          echo "✅ Parsed CSV data:"
+          column -t -s "|" tag_data.csv | sed 's/^/  /'
 
-      - name: Match tags with changed files
+      - name: Match tags and generate review list
         id: match_tags
         run: |
           changed_files=$(cat changed_files.txt)
-          tag_data=$(cat tag_data.txt)
-          required_reviewers=""
-          declare -A processed_tags
           
-          echo "🔍 Starting file-path matching..."
-          while IFS='|' read -r tag path github_ids; do
-            [[ -z "$tag" ]] && continue
-            echo "  🏷 Checking tag: $tag (path: $path)"
+          # 生成按标签分组的审阅者数据
+          rm -f review_data.md
+          while IFS='|' read -r tag path owners; do
+            [[ "$tag" == "tag" ]] && continue  # 跳过标题行
             
-            for file in $changed_files; do
-              if [[ "$file" == "$path" || "$file" == "$path/"* ]]; then
-                echo "    ✅ Match found: $file → $path"
-                if [[ -z "${processed_tags[$tag]}" ]]; then
-                  required_reviewers+="$github_ids "
-                  processed_tags["$tag"]=1
-                  echo "      👥 Adding reviewers: $github_ids"
-                fi
-                break
-              else
-                echo "    ❌ No match: $file ≠ $path"
-              fi
-            done
-          done <<< $(echo -e "$tag_data" | grep -v '^$')
+            # 提取 GitHub ID（精确匹配括号内容）
+            github_ids=$(echo "$owners" | sed -E 's/[^,(]*\(([^)]+)\)[^,]*/@\1/g' | tr ',' ' ' | xargs | tr ' ' '\n' | sort -u | tr '\n' ' ')
+            
+            # 检查文件路径匹配
+            matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
+            if [[ -n "$matched_files" ]]; then
+              echo "📌 **Tag: $tag**" >> review_data.md
+              echo "📍 **Path**: \`$path\`" >> review_data.md
+              echo "👥 **Reviewers**: $github_ids" >> review_data.md
+              echo "📝 **Changed Files**:" >> review_data.md
+              echo "$matched_files" | sed 's/^/  - /' >> review_data.md
+              echo "" >> review_data.md
+            fi
+          done < tag_data.csv
           
-          # 去重处理
-          required_reviewers=$(echo "$required_reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-          echo "REVIEWERS=$required_reviewers" >> $GITHUB_ENV
-          echo "🎯 Final reviewers: $required_reviewers"
+          # 保存结果
+          if [[ -f review_data.md ]]; then
+            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
+            echo "✅ Generated review data:"
+            cat review_data.md
+          else
+            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
+          fi
 
       - name: Delete old comments
-        id: delete_comments
-        if: env.REVIEWERS != ''
+        if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
           echo "🧹 Cleaning up previous comments..."
           comments=$(curl -s \
@@ -107,22 +85,19 @@ jobs:
               "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
           done
 
-      - name: Post review comment
-        if: env.REVIEWERS != ''
+      - name: Post structured comment
+        if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          echo "📝 Generating comment..."
-          comment_header="📌 **Code Owners Request**\n\n**Modified areas:**\n"
-          matched_tags=$(cat tag_data.txt | grep -v '^$' | while IFS='|' read -r tag path _; do
-            echo "- \`$path\` (Tag: **$tag**)"
-          done)
+          echo "📝 Generating professional review comment..."
+          comment_header="## 📌 Code Owners Request\n\n**Detected modifications require review from the following experts:**\n\n"
+          comment_body=$(cat review_data.md | sed 's/📌/###/g; s/📍/**Path**:/g; s/👥/**Reviewers**:/g; s/📝/**Changed Files**:/g')
           
-          comment_body="${comment_header}${matched_tags}\n\n**Required reviewers**: ${{ env.REVIEWERS }}"
+          full_comment="${comment_header}${comment_body}"
+          echo -e "✉️ Final comment content:\n${full_comment}" | sed 's/^/  /'
           
-          echo "✉️ Posting comment:"
-          echo -e "$comment_body" | sed 's/^/  /'
+          # 使用 JSON 安全格式化
+          comment_json=$(jq -n --arg body "$full_comment" '{body: $body}' | sed 's/\\n/\n/g')
           
-          # 使用 jq 确保 JSON 格式正确
-          comment_json=$(jq -n --arg body "$comment_body" '{body: $body}')
           response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
