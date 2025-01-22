@@ -1,13 +1,13 @@
-name: PR Review Workflow
+name: PR Review Commenter
 
 on:
   pull_request:
-    paths:
-      - '**/*'
+    types: [opened, synchronize, reopened]  # 当PR打开、更新或重新打开时触发
 
 jobs:
-  fetch-modified-files:
+  review-comment:
     runs-on: ubuntu-latest
+
     steps:
       # Step 1: Checkout the repository
       - name: Checkout repository
@@ -18,23 +18,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq gh curl
-          
+
       # Step 3: Fetch modified files from the PR
-      - name: Fetch modified files
-        id: fetch-files
+      - name: Fetch modified files for the PR
+        id: fetch-pr-files
         run: |
           echo "Fetching modified files for the PR..."
           PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
             | jq -r '.[].filename' | tr '\n' ' ')
+          
           echo "Modified files: $PR_FILES"
           echo "modified_files=$PR_FILES" >> $GITHUB_ENV
 
-  parse-maintenancer-json:
-    runs-on: ubuntu-latest
-    needs: fetch-modified-files
-    steps:
-      # Step 4: Parse MAINTAINER.json and determine reviewers for modified files
+      # Step 4: Parse MAINTAINER.json and check file tags
       - name: Parse MAINTAINER.json and determine reviewers
         id: parse-maintenancer-json
         run: |
@@ -98,26 +95,30 @@ jobs:
           echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
           echo "Reviewers determined: $COMMENT_BODY"
 
-  comment-on-pr:
-    runs-on: ubuntu-latest
-    needs: parse-maintenancer-json
-    steps:
-      # Step 5: Comment on PR with the reviewers' list
-      - name: Comment on PR with reviewers' list
+      # Step 5: Create or update CI review comment
+      - name: Create or update CI comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
           COMMENT_BODY="${{ env.comment_body }}"
+
+          # Check if COMMENT_BODY is empty before proceeding
+          if [[ -z "$COMMENT_BODY" ]]; then
+            echo "No relevant files modified, skipping comment creation."
+            exit 0
+          fi
+
+          # Fetch existing comments and check if a CI bot comment exists
+          COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
           
-          # Check if a comment from the bot already exists
-          existing_comments=$(gh pr view $PR_NUMBER --json comments -q '.comments[].body')
-          comment_exists=$(echo "$existing_comments" | grep -F "$COMMENT_BODY" || true)
-          
-          if [ -z "$comment_exists" ]; then
+          # Check if there's an existing CI bot comment
+          EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
+
+          if [[ -n "$EXISTING_COMMENT" ]]; then
+            echo "Updating existing CI bot comment."
+            gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
+          else
             echo "Creating new CI bot comment."
             gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
-          else
-            echo "Updating existing CI bot comment."
-            # Get the comment ID of the last comment from the bot
-            comment_id=$(gh pr view $PR_NUMBER --json comments -q ".comments[?(.body == \"$COMMENT_BODY\")].id")
-            gh pr edit $PR_NUMBER --comment-id $comment_id --body "$COMMENT_BODY"
           fi
