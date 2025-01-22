@@ -7,4 +7,4 @@ if GetDepend('RT_UTEST_USING_ALL_CASES') or GetDepend('RT_UTEST_TC_USING_KLIBC')
 
 group = DefineGroup('utestcases', src, depend = [''])
 
-Return('group')
+Return('group')sad

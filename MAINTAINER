@@ -1,0 +1,11 @@
+tag: stm32
+path: bsp/stm32
+owners: ixd(kurisaW)<reviewer1@example.com>
+
+tag: kernel
+path: src
+owners: ixd(kurisaW)<reviewer1@example.com>, pad(Nedki-L)<reviewer2@example.com>
+
+tag: workflow
+path: .github/workflows
+owners: ixd(kurisaW)<reviewer1@example.com>, pad(Nedki-L)<reviewer2@example.com>, mem(KurisaW-Collaborative)<reviewer3@example.com>

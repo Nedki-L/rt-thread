@@ -1,124 +1,125 @@
-name: PR Review Commenter
+name: Auto Reviewers Assignment
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]  # 当PR打开、更新或重新打开时触发
+    types: [opened, synchronize, reopened]
 
 jobs:
-  review-comment:
+  assign-reviewers:
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      # Step 2: Install necessary dependencies
-      - name: Install jq and GitHub CLI
+      - name: Get changed files in the PR
+        id: changed_files
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq gh curl
+          echo "Getting changed files..."
+          changed_files=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
+            jq -r '.[].filename')
+          filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
+          echo "$filtered_files" > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
 
-      # Step 3: Fetch modified files from the PR
-      - name: Fetch modified files for the PR
-        id: fetch-pr-files
+      - name: Save MAINTAINER file to a temporary file
+        id: save_maintainer
         run: |
-          echo "Fetching modified files for the PR..."
-          PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            | jq -r '.[].filename' | tr '\n' ' ')
-          
-          echo "Modified files: $PR_FILES"
-          echo "modified_files=$PR_FILES" >> $GITHUB_ENV
+          echo "Saving MAINTAINER file..."
+          cat MAINTAINER > maintainer_content.txt
 
-      # Step 4: Parse MAINTAINER.json and check file tags
-      - name: Parse MAINTAINER.json and determine reviewers
-        id: parse-maintenancer-json
+      - name: Delete previous GitHub Action comments
+        id: delete_previous_comments
         run: |
-          echo "Parsing MAINTAINER.json and determining reviewers..."
-
-          # Initialize variables
-          MODIFIED_FILES="${{ env.modified_files }}"
-          REVIEWERS_LIST=""
-          COMMENT_BODY=""
-          
-          # Convert the modified files string into an array
-          MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
-
-          echo "Initialize variables"
-
-          # Read the MAINTAINER.json file and parse each tag's information
-          jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
-            # Extract tag, path, and owner information from the JSON
-            tag=$(echo $tag_info | jq -r '.tag')
-            path=$(echo $tag_info | jq -r '.path')
-            owners=$(echo $tag_info | jq -r '.owner')
-
-            echo "Processing tag: $tag, path: $path, owners: $owners"
-
-            # Check if any modified file matches the path (flexible matching)
-            matching_files=()
-            for file in "${MODIFIED_FILES_ARRAY[@]}"; do
-              # Check if the file path starts with the specified tag's path
-              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
-                matching_files+=("$file")
-              fi
-            done
-
-            if [ ${#matching_files[@]} -gt 0 ]; then
-              # Collect reviewers for this tag
-              IFS=', ' read -r -a owner_array <<< "$owners"
-              reviewers=""
-              for owner in "${owner_array[@]}"; do
-                reviewer="@$(echo $owner | cut -d'(' -f1)"
-                reviewers="$reviewers $reviewer"
-              done
-
-              # Prepare the comment for this tag
-              TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-              COMMENT_BODY+="\nTimeout: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
-            else
-              echo "No files match tag $tag"
-            fi
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          action_bot_comments=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id')
+          for comment_id in $action_bot_comments; do
+            echo "Deleting comment with ID: $comment_id"
+            curl -s \
+              -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
           done
 
-          # Debug: Print the comment body for review
-          echo "Generated COMMENT_BODY: $COMMENT_BODY"
-
-          # Check if COMMENT_BODY is empty
-          if [[ -z "$COMMENT_BODY" ]]; then
-            echo "No relevant files modified, skipping comment creation."
-            exit 0
-          fi
-
-          # Set the reviewers and comment body as output variables
-          echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
-          echo "Reviewers determined: $COMMENT_BODY"
-
-      # Step 5: Create or update CI review comment
-      - name: Create or update CI comment
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
+      - name: Read MAINTAINER file and generate review comments
+        id: generate_comments
         run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          COMMENT_BODY="${{ env.comment_body }}"
+          maintainer_content=$(cat maintainer_content.txt)
+          changed_files=$(cat changed_files.txt)
+          comment_msg=""
+          seen_tags=""
 
-          # Check if COMMENT_BODY is empty before proceeding
-          if [[ -z "$COMMENT_BODY" ]]; then
-            echo "No relevant files modified, skipping comment creation."
-            exit 0
-          fi
+          # 逐行解析 MAINTAINER 文件
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
+              tag="${BASH_REMATCH[1]}"
+              echo "Processing tag: $tag"
 
-          # Fetch existing comments and check if a CI bot comment exists
-          COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
-          
-          # Check if there's an existing CI bot comment
-          EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
+              # 读取 path 行
+              read -r path_line
+              if [[ "$path_line" =~ ^path:[[:space:]]+(.*) ]]; then
+                paths="${BASH_REMATCH[1]}"
+              else
+                echo "Error: Invalid path line for tag $tag"
+                continue
+              fi
 
-          if [[ -n "$EXISTING_COMMENT" ]]; then
-            echo "Updating existing CI bot comment."
-            gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
-          else
-            echo "Creating new CI bot comment."
-            gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
-          fi
+              # 读取 owners 行
+              read -r owners_line
+              if [[ "$owners_line" =~ ^owners:[[:space:]]+(.*) ]]; then
+                owners="${BASH_REMATCH[1]}"
+              else
+                echo "Error: Invalid owners line for tag $tag"
+                continue
+              fi
+
+              # 检查是否已处理该 tag
+              if [[ " $seen_tags " =~ " $tag " ]]; then
+                echo "Tag $tag already processed. Skipping."
+                continue
+              fi
+
+              # 检查是否有文件匹配路径
+              file_matched=false
+              for file in $changed_files; do
+                if [[ "$file" == $paths* ]]; then
+                  file_matched=true
+                  break
+                fi
+              done
+
+              if [ "$file_matched" = true ]; then
+                # 解析 owners 列表
+                reviewers=""
+                IFS=',' read -ra owner_entries <<< "$owners"
+                for entry in "${owner_entries[@]}"; do
+                  entry_clean=$(echo "$entry" | xargs)  # 去除前后空格
+                  github_user=$(echo "$entry_clean" | sed -E 's/^([a-zA-Z0-9_-]+)\(.*/\1/')
+                  reviewers+="@$github_user "
+                done
+
+                # 去重
+                reviewers=$(echo "$reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+
+                timestamp=$(date +'%Y-%m-%d %H:%M:%S')
+                comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\nTag: $tag\nPlease review changes related to this tag.\n\n"
+                seen_tags="$seen_tags $tag"
+              fi
+            fi
+          done <<< "$maintainer_content"
+
+          echo "comment_msg=$comment_msg" >> $GITHUB_ENV
+
+      - name: Post comment on the PR
+        if: env.comment_msg != ''
+        run: |
+          comment="${{ env.comment_msg }}"
+          curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -X POST \
+            -d "{\"body\": \"$comment\"}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
