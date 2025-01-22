@@ -102,37 +102,30 @@ jobs:
           done
           echo "::endgroup::"
 
-      - name: Post structured comment
-        if: env.REVIEW_DATA_EXISTS == 'true'
+      - name: Generate review data
+        id: generate_review
         run: |
-          # 生成评论内容
-          comment_header="## 📌 Code Ownership Review Request\n\n"
-          comment_body=$(cat review_data.md)
-          full_comment="${comment_header}${comment_body}"
-      
-          # 使用 jq 安全生成 JSON（关键修复）
-          comment_json=$(jq -n \
-            --arg body "$full_comment" \
-            '{body: $body}'
-          )
-      
-          # 调试输出
-          echo "Generated JSON:"
-          echo "$comment_json"
-      
-          # 发送请求
-          response=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -X POST \
-            -d "$comment_json" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
-          )
-      
-          # 处理响应
-          if echo "$response" | grep -q '"message"'; then
-            echo "❌ Error: $(echo "$response" | jq .message)"
-            exit 1
-          else
-            echo "✅ Comment posted successfully!"
-          fi
+          changed_files=$(cat changed_files.txt)
+          rm -f review_data.md
+          
+          while IFS='|' read -r tag path reviewers; do
+            matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
+            if [[ -n "$matched_files" ]]; then
+              # 生成带间距的 Markdown 块
+              {
+                echo ""
+                echo "### 🏷️ Tag: $tag"
+                echo "**Path:** \`$path\`  "
+                echo "**Reviewers:** $reviewers  "
+                echo "<details>"
+                echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
+                echo ""
+                echo "$matched_files" | sed 's/^/- /'
+                echo ""
+                echo "</details>"
+              } >> review_data.md
+            fi
+          done < tag_data.csv
+          
+          # 添加首行间距控制
+          sed -i '1s/^/\n/' review_data.md  # 在文件开头添加换行
