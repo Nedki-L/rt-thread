@@ -32,6 +32,8 @@ jobs:
           if [[ -f "MAINTAINER.json" ]]; then
             MAINTAINER_JSON=$(cat MAINTAINER.json)
             echo "Successfully read MAINTAINER.json."
+            echo "Contents of MAINTAINER.json:"
+            echo "$MAINTAINER_JSON"
           else
             echo "Error: MAINTAINER.json not found."
             exit 1
