@@ -14,110 +14,82 @@ jobs:
       - name: Get changed files in the PR
         id: changed_files
         run: |
-          echo "Getting changed files..."
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
+          # 过滤掉 MAINTAINER 文件自身
           filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
           echo "$filtered_files" > changed_files.txt
           echo "Changed files:"
           cat changed_files.txt
 
-      - name: Save MAINTAINER file to a temporary file
-        id: save_maintainer
+      - name: Parse MAINTAINER file
+        id: parse_maintainer
         run: |
-          echo "Saving MAINTAINER file..."
-          cat MAINTAINER > maintainer_content.txt
+          # 读取 MAINTAINER 文件内容
+          maintainer_content=$(cat MAINTAINER)
+          echo "$maintainer_content" > maintainer_content.txt
 
-      - name: Delete previous GitHub Action comments
-        id: delete_previous_comments
-        run: |
-          comments=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-          action_bot_comments=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id')
-          for comment_id in $action_bot_comments; do
-            echo "Deleting comment with ID: $comment_id"
-            curl -s \
-              -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
-          done
-
-      - name: Read MAINTAINER file and generate review comments
-        id: generate_comments
-        run: |
-          maintainer_content=$(cat maintainer_content.txt)
-          changed_files=$(cat changed_files.txt)
-          comment_msg=""
-          seen_tags=""
-
-          # 逐行解析 MAINTAINER 文件
+          # 解析每个 tag 的 path 和 owners
+          tag_data=""
+          current_tag=""
           while IFS= read -r line; do
             if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
-              tag="${BASH_REMATCH[1]}"
-              echo "Processing tag: $tag"
-
-              # 读取 path 行
-              read -r path_line
-              if [[ "$path_line" =~ ^path:[[:space:]]+(.*) ]]; then
-                paths="${BASH_REMATCH[1]}"
-              else
-                echo "Error: Invalid path line for tag $tag"
-                continue
-              fi
-
-              # 读取 owners 行
-              read -r owners_line
-              if [[ "$owners_line" =~ ^owners:[[:space:]]+(.*) ]]; then
-                owners="${BASH_REMATCH[1]}"
-              else
-                echo "Error: Invalid owners line for tag $tag"
-                continue
-              fi
-
-              # 检查是否已处理该 tag
-              if [[ " $seen_tags " =~ " $tag " ]]; then
-                echo "Tag $tag already processed. Skipping."
-                continue
-              fi
-
-              # 检查是否有文件匹配路径
-              file_matched=false
-              for file in $changed_files; do
-                if [[ "$file" == $paths* ]]; then
-                  file_matched=true
-                  break
-                fi
-              done
-
-              if [ "$file_matched" = true ]; then
-                # 解析 owners 列表
-                reviewers=""
-                IFS=',' read -ra owner_entries <<< "$owners"
-                for entry in "${owner_entries[@]}"; do
-                  entry_clean=$(echo "$entry" | xargs)  # 去除前后空格
-                  github_user=$(echo "$entry_clean" | sed -E 's/^([a-zA-Z0-9_-]+)\(.*/\1/')
-                  reviewers+="@$github_user "
-                done
-
-                # 去重
-                reviewers=$(echo "$reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-
-                timestamp=$(date +'%Y-%m-%d %H:%M:%S')
-                comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\nTag: $tag\nPlease review changes related to this tag.\n\n"
-                seen_tags="$seen_tags $tag"
-              fi
+              current_tag="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^path:[[:space:]]+(.*) ]]; then
+              path="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^owners:[[:space:]]+(.*) ]]; then
+              owners="${BASH_REMATCH[1]}"
+              # 将 owners 转换为 GitHub ID 列表
+              github_ids=$(echo "$owners" | sed -E 's/[^,]*(\([^)]+\))[^,]*/@\1/g' | tr -d '()' | tr ',' ' ')
+              tag_data+="$current_tag|$path|$github_ids\n"
             fi
           done <<< "$maintainer_content"
 
-          echo "comment_msg=$comment_msg" >> $GITHUB_ENV
+          echo -e "$tag_data" > tag_data.txt
+          echo "Parsed tag data:"
+          cat tag_data.txt
+
+      - name: Match changed files with tags
+        id: match_tags
+        run: |
+          changed_files=$(cat changed_files.txt)
+          tag_data=$(cat tag_data.txt)
+
+          required_reviewers=""
+          declare -A processed_tags  # 用于去重
+
+          while IFS='|' read -r tag path github_ids; do
+            # 检查是否已处理该 tag
+            if [[ -n "${processed_tags[$tag]}" ]]; then
+              continue
+            fi
+
+            # 检查是否有文件匹配 path
+            for file in $changed_files; do
+              if [[ "$file" == $path* ]]; then
+                required_reviewers+="$github_ids "
+                processed_tags["$tag"]=1
+                break
+              fi
+            done
+          done <<< $(echo -e "$tag_data" | grep -v '^$')
+
+          # 去重并格式化
+          required_reviewers=$(echo "$required_reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+          echo "REVIEWERS=$required_reviewers" >> $GITHUB_ENV
+          echo "Final reviewers: $required_reviewers"
 
       - name: Post comment on the PR
-        if: env.comment_msg != ''
+        if: env.REVIEWERS != ''
         run: |
-          comment="${{ env.comment_msg }}"
+          comment="📌 **Code Owners Request**\n\nDetected changes in the following areas:\n$(
+            cat tag_data.txt | grep -v '^$' | while IFS='|' read -r tag path _; do
+              echo "- \`$path\` (Tag: **$tag**)"
+            done
+          )\n\nRequired reviewers: ${{ env.REVIEWERS }}"
+          
           curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -X POST \
