@@ -60,8 +60,9 @@ jobs:
           # 读取保存的 MAINTAINER 内容
           maintainer_content=$(cat maintainer_content.txt)
 
+          # 打印 MAINTAINER 内容，检查格式
           echo "MAINTAINER content: $maintainer_content"
-          
+
           # 读取修改的文件路径
           changed_files=$(cat changed_files.txt)
 
@@ -85,8 +86,9 @@ jobs:
               # 判断修改的文件是否匹配该 path
               for file in $changed_files; do
                 if [[ "$file" == $path* ]]; then
-                  # 生成评论内容
-                  reviewers=$(echo "$owners" | sed 's/,/ @/g' | sed 's/^/@/')
+                  # 提取 GitHub 用户名并格式化
+                  reviewers=$(echo "$owners" | sed -E 's/([a-zA-Z0-9_-]+)\(.*\)<.*>/@\1/g' | tr '\n' ' ' | sed 's/ $//')
+
                   timestamp=$(date +'%Y-%m-%d %H:%M:%S')
                   comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n\n"
                 fi
