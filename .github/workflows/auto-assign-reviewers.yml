@@ -1,205 +1,124 @@
-# name: PR Review Commenter
-
-# on:
-#   pull_request:
-#     types: [opened, synchronize, reopened]  # 当PR打开、更新或重新打开时触发
-
-# jobs:
-#   review-comment:
-#     runs-on: ubuntu-latest
-
-#     steps:
-#       # Step 1: Checkout the repository
-#       - name: Checkout repository
-#         uses: actions/checkout@v3
-
-#       # Step 2: Install necessary dependencies
-#       - name: Install jq and GitHub CLI
-#         run: |
-#           sudo apt-get update
-#           sudo apt-get install -y jq gh curl
-
-#       # Step 3: Fetch modified files from the PR
-#       - name: Fetch modified files for the PR
-#         id: fetch-pr-files
-#         run: |
-#           echo "Fetching modified files for the PR..."
-#           PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-#             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-#             | jq -r '.[].filename' | tr '\n' ' ')
-          
-#           echo "Modified files: $PR_FILES"
-#           echo "modified_files=$PR_FILES" >> $GITHUB_ENV
-
-#       # Step 4: Parse MAINTAINER.json and check file tags
-#       - name: Parse MAINTAINER.json and determine reviewers
-#         id: parse-maintenancer-json
-#         run: |
-#           echo "Parsing MAINTAINER.json and determining reviewers..."
-
-#           # Initialize variables
-#           MODIFIED_FILES="${{ env.modified_files }}"
-#           REVIEWERS_LIST=""
-#           COMMENT_BODY=""
-          
-#           # Convert the modified files string into an array
-#           MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
-
-#           echo "Initialize variables"
-
-#           # Read the MAINTAINER.json file and parse each tag's information
-#           jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
-#             # Extract tag, path, and owner information from the JSON
-#             tag=$(echo $tag_info | jq -r '.tag')
-#             path=$(echo $tag_info | jq -r '.path')
-#             owners=$(echo $tag_info | jq -r '.owner')
-
-#             echo "Processing tag: $tag, path: $path, owners: $owners"
-
-#             # Check if any modified file matches the path (flexible matching)
-#             matching_files=()
-#             for file in "${MODIFIED_FILES_ARRAY[@]}"; do
-#               # Check if the file path starts with the specified tag's path
-#               if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
-#                 matching_files+=("$file")
-#               fi
-#             done
-
-#             if [ ${#matching_files[@]} -gt 0 ]; then
-#               # Collect reviewers for this tag
-#               IFS=', ' read -r -a owner_array <<< "$owners"
-#               reviewers=""
-#               for owner in "${owner_array[@]}"; do
-#                 reviewer="@$(echo $owner | cut -d'(' -f1)"
-#                 reviewers="$reviewers $reviewer"
-#               done
-
-#               # Prepare the comment for this tag
-#               TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-#               COMMENT_BODY+="\nTimeout: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
-#             else
-#               echo "No files match tag $tag"
-#             fi
-#           done
-
-#           # Debug: Print the comment body for review
-#           echo "Generated COMMENT_BODY: $COMMENT_BODY"
-
-#           # Check if COMMENT_BODY is empty
-#           if [[ -z "$COMMENT_BODY" ]]; then
-#             echo "No relevant files modified, skipping comment creation."
-#             exit 0
-#           fi
-
-#           # Set the reviewers and comment body as output variables
-#           echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
-#           echo "Reviewers determined: $COMMENT_BODY"
-
-#       # Step 5: Create or update CI review comment
-#       - name: Create or update CI comment
-#         env:
-#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
-#         run: |
-#           PR_NUMBER=${{ github.event.pull_request.number }}
-#           COMMENT_BODY="${{ env.comment_body }}"
-
-#           # Check if COMMENT_BODY is empty before proceeding
-#           if [[ -z "$COMMENT_BODY" ]]; then
-#             echo "No relevant files modified, skipping comment creation."
-#             exit 0
-#           fi
-
-#           # Fetch existing comments and check if a CI bot comment exists
-#           COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
-          
-#           # Check if there's an existing CI bot comment
-#           EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
-
-#           if [[ -n "$EXISTING_COMMENT" ]]; then
-#             echo "Updating existing CI bot comment."
-#             gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
-#           else
-#             echo "Creating new CI bot comment."
-#             gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
-#           fi
-
-
-name: PR Review Based on Maintainers
+name: PR Review Commenter
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened]  # 当PR打开、更新或重新打开时触发
 
 jobs:
-  review-pr:
+  review-comment:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      # Step 1: Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Node.js (for JSON parsing)
-      uses: actions/setup-node@v2
-      with:
-        node-version: '14'
+      # Step 2: Install necessary dependencies
+      - name: Install jq and GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq gh curl
 
-    - name: Install jq and GitHub CLI
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y jq gh curl
+      # Step 3: Fetch modified files from the PR
+      - name: Fetch modified files for the PR
+        id: fetch-pr-files
+        run: |
+          echo "Fetching modified files for the PR..."
+          PR_FILES=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            | jq -r '.[].filename' | tr '\n' ' ')
+          
+          echo "Modified files: $PR_FILES"
+          echo "modified_files=$PR_FILES" >> $GITHUB_ENV
 
-    - name: Parse MAINTAINER.json and get affected owners
-      run: |
-        # Load MAINTAINER.json and parse it
-        maintainer_json=$(cat MAINTAINER.json)
-        
-        # Get list of modified files in the PR
-        pr_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
-        
-        # Parse the MAINTAINER.json to create a mapping of path to owners
-        declare -A tag_owners
+      # Step 4: Parse MAINTAINER.json and check file tags
+      - name: Parse MAINTAINER.json and determine reviewers
+        id: parse-maintenancer-json
+        run: |
+          echo "Parsing MAINTAINER.json and determining reviewers..."
 
-        for entry in $(echo "$maintainer_json" | jq -r '.[] | @base64'); do
-          _jq() {
-            echo ${entry} | base64 --decode | jq -r ${1}
-          }
+          # Initialize variables
+          MODIFIED_FILES="${{ env.modified_files }}"
+          REVIEWERS_LIST=""
+          COMMENT_BODY=""
+          
+          # Convert the modified files string into an array
+          MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
 
-          tag=$(echo "$entry" | _jq '.tag')
-          path=$(echo "$entry" | _jq '.path')
-          owners=$(echo "$entry" | _jq '.owners')
+          echo "Initialize variables"
 
-          # Convert owners into GitHub IDs
-          owner_github_ids=$(echo "$owners" | sed -E 's/.*\(([^)]+)\)<.*>/@\1/g')
+          # Read the MAINTAINER.json file and parse each tag's information
+          jq -c '.[]' MAINTAINER.json | while IFS= read -r tag_info; do
+            # Extract tag, path, and owner information from the JSON
+            tag=$(echo $tag_info | jq -r '.tag')
+            path=$(echo $tag_info | jq -r '.path')
+            owners=$(echo $tag_info | jq -r '.owner')
 
-          tag_owners["$path"]="$tag_owners[$path] $owner_github_ids"
-        done
+            echo "Processing tag: $tag, path: $path, owners: $owners"
 
-        # Check which tag needs to be triggered based on modified files
-        affected_tags=()
-        for file in $pr_files; do
-          for path in "${!tag_owners[@]}"; do
-            if [[ $file == $path* ]]; then
-              affected_tags+=("${tag_owners[$path]}")
+            # Check if any modified file matches the path (flexible matching)
+            matching_files=()
+            for file in "${MODIFIED_FILES_ARRAY[@]}"; do
+              # Check if the file path starts with the specified tag's path
+              if [[ "$file" == $path/* ]] || [[ "$file" == $path ]]; then
+                matching_files+=("$file")
+              fi
+            done
+
+            if [ ${#matching_files[@]} -gt 0 ]; then
+              # Collect reviewers for this tag
+              IFS=', ' read -r -a owner_array <<< "$owners"
+              reviewers=""
+              for owner in "${owner_array[@]}"; do
+                reviewer="@$(echo $owner | cut -d'(' -f1)"
+                reviewers="$reviewers $reviewer"
+              done
+
+              # Prepare the comment for this tag
+              TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
+              COMMENT_BODY+="\nTimeout: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
+            else
+              echo "No files match tag $tag"
             fi
           done
-        done
 
-        # If affected tags found, prepare the comment
-        if [ ${#affected_tags[@]} -gt 0 ]; then
-          tags_unique=$(echo "${affected_tags[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+          # Debug: Print the comment body for review
+          echo "Generated COMMENT_BODY: $COMMENT_BODY"
+
+          # Check if COMMENT_BODY is empty
+          if [[ -z "$COMMENT_BODY" ]]; then
+            echo "No relevant files modified, skipping comment creation."
+            exit 0
+          fi
+
+          # Set the reviewers and comment body as output variables
+          echo "comment_body=$COMMENT_BODY" >> $GITHUB_ENV
+          echo "Reviewers determined: $COMMENT_BODY"
+
+      # Step 5: Create or update CI review comment
+      - name: Create or update CI comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use the GITHUB_TOKEN as the environment variable for gh
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          COMMENT_BODY="${{ env.comment_body }}"
+
+          # Check if COMMENT_BODY is empty before proceeding
+          if [[ -z "$COMMENT_BODY" ]]; then
+            echo "No relevant files modified, skipping comment creation."
+            exit 0
+          fi
+
+          # Fetch existing comments and check if a CI bot comment exists
+          COMMENTS=$(gh pr view $PR_NUMBER --json comments -q ".comments")
           
-          # Format and send the comment
-          pr_number=${{ github.event.pull_request.number }}
-          comment_body="timestamp: $(date)
-          
-Reviewer: ${tags_unique}
+          # Check if there's an existing CI bot comment
+          EXISTING_COMMENT=$(echo "$COMMENTS" | jq -r '.[] | select(.user.login=="github-actions[bot]") | .id' || true)
 
-Modified files:
-$(echo "$pr_files")"
-
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"body":"'"$comment_body"'"}' \
-            "https://api.github.com/repos/${{ github.repository }}/issues/$pr_number/comments"
-        fi
+          if [[ -n "$EXISTING_COMMENT" ]]; then
+            echo "Updating existing CI bot comment."
+            gh pr comment $PR_NUMBER --body "$COMMENT_BODY" --comment-id $EXISTING_COMMENT
+          else
+            echo "Creating new CI bot comment."
+            gh pr comment $PR_NUMBER --body "$COMMENT_BODY"
+          fi
