@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
-      
+
       - name: Get changed files in the PR
         id: changed_files
         run: |
@@ -20,33 +20,33 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
           echo "Changed files: $changed_files"
-          echo "::set-output name=changed_files::$changed_files"
-        
+          echo "changed_files=$changed_files" >> $GITHUB_ENV  # 保存到环境变量中
+
       - name: Parse MAINTAINER file
         id: parse_maintainer
         run: |
           echo "Parsing MAINTAINER file..."
           maintainer_content=$(cat MAINTAINER)
-          echo "::set-output name=maintainer_content::$maintainer_content"
-        
+          echo "maintainer_content=$maintainer_content" >> $GITHUB_ENV  # 保存到环境变量中
+
       - name: Generate review comments
         id: generate_comments
         run: |
-          # 解析 MAINTAINER 文件并根据修改的文件生成评论
-          changed_files="${{ steps.changed_files.outputs.changed_files }}"
-          maintainer_content="${{ steps.parse_maintainer.outputs.maintainer_content }}"
-          
+          # 从环境变量中获取修改的文件和 MAINTAINER 内容
+          changed_files="${{ env.changed_files }}"
+          maintainer_content="${{ env.maintainer_content }}"
+
           # 初始化空的评论内容
           comment_msg=""
 
           # 解析 MAINTAINER 文件，按 tag 分类
           tags=$(echo "$maintainer_content" | grep -oP 'tag: \K\w+')
-          
+
           for tag in $tags; do
             # 获取对应的 path 和 reviewers
             paths=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'path:' | awk '{print $2}')
             owners=$(echo "$maintainer_content" | grep -A 1 "tag: $tag" | grep 'owners:' | sed 's/owners: //')
-            
+
             for path in $paths; do
               # 判断修改的文件是否匹配该 path
               for file in $changed_files; do
@@ -60,14 +60,15 @@ jobs:
             done
           done
 
-          echo "::set-output name=comment_msg::$comment_msg"
+          echo "comment_msg=$comment_msg" >> $GITHUB_ENV  # 保存评论内容到环境变量中
 
       - name: Post comment on the PR
-        if: steps.generate_comments.outputs.comment_msg != ''
+        if: env.comment_msg != ''
         run: |
-          comment="${{ steps.generate_comments.outputs.comment_msg }}"
+          comment="${{ env.comment_msg }}"
           curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -X POST \
             -d "{\"body\": \"$comment\"}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+
