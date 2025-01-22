@@ -1,6 +1,6 @@
 [
   {
-    "tag": "bsp-stm32",
+    "tag": "stm32",
     "path": "/bsp/stm32",
     "owner": "reviewer1(kurisaW)<reviewer1@example.com>"
   },
