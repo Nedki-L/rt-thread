@@ -41,7 +41,7 @@ jobs:
           MODIFIED_FILES="${{ env.modified_files }}"
           REVIEWERS_LIST=""
           COMMENT_BODY=""
-
+          
           # Convert the modified files string into an array
           MODIFIED_FILES_ARRAY=($MODIFIED_FILES)
 
@@ -56,9 +56,9 @@ jobs:
 
             echo "Processing tag: $tag, path: $path, owners: $owners"
 
-            # Check if any modified file matches the path
+            # Check if any modified file matches the path (flexible matching)
             for file in "${MODIFIED_FILES_ARRAY[@]}"; do
-              # Ensure proper path matching (handle both exact matches and prefix matches)
+              # Check if the file is in the directory or matches the tag path
               if [[ "$file" == $path* ]]; then
                 echo "File $file matches tag $tag"
 
@@ -73,6 +73,8 @@ jobs:
                 # Prepare the comment for this tag
                 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
                 COMMENT_BODY+="\nTimestamp: $TIMESTAMP\nReviewer: $reviewers\n\nTag: $tag\nPlease take a review of this tag\n"
+              else
+                echo "File $file does not match tag $tag"
               fi
             done
           done
