@@ -7,119 +7,150 @@ on:
 jobs:
   assign-reviewers:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
-      - name: Get changed files in the PR
-        id: changed_files
+      - name: Get changed files
+        id: changed_files_step
         run: |
-          echo "Getting changed files..."
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
             jq -r '.[].filename')
-          filtered_files=$(echo "$changed_files" | grep -v 'MAINTAINER')
-          echo "$filtered_files" > changed_files.txt
-          echo "Changed files:"
-          cat changed_files.txt
+          
+          echo "$changed_files" | grep -v '^MAINTAINER$' > changed_files.txt
+          echo "🔄 Changed files:"
+          cat changed_files.txt | sed 's/^/  - /'
 
-      - name: Save MAINTAINER file to a temporary file
-        id: save_maintainer
+      - name: Parse MAINTAINER file
+        id: parse_maintainer_step
         run: |
-          echo "Saving MAINTAINER file..."
-          cat MAINTAINER > maintainer_content.txt
+          awk '
+            /^tag:/ { tag=$2 }
+            /^path:/ { path=$2 }
+            /^owners:/ {
+              split($0, parts, /[()]/)
+              github_ids = ""
+              for (i=2; i<=length(parts); i+=2) {
+                github_ids = github_ids "@" parts[i] " "
+              }
+              print tag "|" path "|" github_ids
+            }
+          ' MAINTAINER > tag_data.csv
+          echo "✅ Parsed data:"
+          column -t -s "|" tag_data.csv | sed 's/^/  /'
 
-      - name: Delete previous GitHub Action comments
-        id: delete_previous_comments
+      - name: Generate review data
+        id: generate_review_step
         run: |
-          comments=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-          action_bot_comments=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id')
-          for comment_id in $action_bot_comments; do
-            echo "Deleting comment with ID: $comment_id"
-            curl -s \
-              -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
-          done
-
-      - name: Read MAINTAINER file and generate review comments
-        id: generate_comments
-        run: |
-          maintainer_content=$(cat maintainer_content.txt)
           changed_files=$(cat changed_files.txt)
-          comment_msg=""
-          seen_tags=""
-
-          # 逐行解析 MAINTAINER 文件
-          while IFS= read -r line; do
-            if [[ "$line" =~ ^tag:[[:space:]]+(.*) ]]; then
-              tag="${BASH_REMATCH[1]}"
-              echo "Processing tag: $tag"
-
-              # 读取 path 行
-              read -r path_line
-              if [[ "$path_line" =~ ^path:[[:space:]]+(.*) ]]; then
-                paths="${BASH_REMATCH[1]}"
-              else
-                echo "Error: Invalid path line for tag $tag"
-                continue
-              fi
-
-              # 读取 owners 行
-              read -r owners_line
-              if [[ "$owners_line" =~ ^owners:[[:space:]]+(.*) ]]; then
-                owners="${BASH_REMATCH[1]}"
-              else
-                echo "Error: Invalid owners line for tag $tag"
-                continue
-              fi
-
-              # 检查是否已处理该 tag
-              if [[ " $seen_tags " =~ " $tag " ]]; then
-                echo "Tag $tag already processed. Skipping."
-                continue
-              fi
-
-              # 检查是否有文件匹配路径
-              file_matched=false
-              for file in $changed_files; do
-                if [[ "$file" == $paths* ]]; then
-                  file_matched=true
-                  break
-                fi
-              done
-
-              if [ "$file_matched" = true ]; then
-                # 解析 owners 列表
-                reviewers=""
-                IFS=',' read -ra owner_entries <<< "$owners"
-                for entry in "${owner_entries[@]}"; do
-                  entry_clean=$(echo "$entry" | xargs)  # 去除前后空格
-                  github_user=$(echo "$entry_clean" | sed -E 's/^([a-zA-Z0-9_-]+)\(.*/\1/')
-                  reviewers+="@$github_user "
-                done
-
-                # 去重
-                reviewers=$(echo "$reviewers" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-
-                timestamp=$(date +'%Y-%m-%d %H:%M:%S')
-                comment_msg+="Timestamp: $timestamp\nReviewer: $reviewers\nTag: $tag\nPlease review changes related to this tag.\n\n"
-                seen_tags="$seen_tags $tag"
-              fi
+          rm -f review_data.md
+          
+          # 生成评论头部（严格控制空行）
+          echo "## 📌 Code Ownership Review Request" > review_data.md
+          
+          while IFS='|' read -r tag path reviewers; do
+            echo "🔍 Processing tag: $tag"
+            matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
+            
+            if [[ -n "$matched_files" ]]; then
+              echo "  ✅ Matched files:"
+              echo "$matched_files" | sed 's/^/    - /'
+              
+              # 生成带间距的Markdown块
+              {
+                echo ""
+                echo "### 🏷️ Tag: $tag"
+                echo "**Path:** \`$path\`  "
+                echo "**Reviewers:** $reviewers  "
+                echo "<details>"
+                echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
+                echo ""
+                echo "$matched_files" | sed 's/^/- /'
+                echo ""
+                echo "</details>"
+              } >> review_data.md
             fi
-          done <<< "$maintainer_content"
+          done < tag_data.csv
+          
+          # 强制设置环境变量（关键修复）
+          if [[ -s review_data.md ]]; then
+            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
+            echo "📝 Generated review data:"
+            cat review_data.md
+          else
+            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
+            echo "⚠️ No matching tags found"
+          fi
+          
+          # 调试输出当前目录结构
+          echo "::group::Directory Structure"
+          pwd
+          ls -al
+          echo "::endgroup::"
 
-          echo "comment_msg=$comment_msg" >> $GITHUB_ENV
-
-      - name: Post comment on the PR
-        if: env.comment_msg != ''
+      - name: Delete old comments
+        if: env.REVIEW_DATA_EXISTS == 'true'
         run: |
-          comment="${{ env.comment_msg }}"
-          curl -s \
+          echo "::group::Deleting previous comments..."
+          comment_ids=$(
+            curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" |
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | .id'
+          )
+          for id in $comment_ids; do
+            echo "Deleting comment $id"
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$id"
+          done
+          echo "::endgroup::"
+
+      - name: Post structured comment
+        if: env.REVIEW_DATA_EXISTS == 'true'
+        run: |
+          # 动态生成去重审核者列表（保留原始顺序）
+          reviewers_list=$(awk -F'|' '{print $3}' tag_data.csv | tr ' ' '\n' | awk '!seen[$0]++' | xargs)
+          
+          # 构建评论内容
+          comment_header="## 📌 Code Ownership Review Request\n\n"
+          comment_body=$(cat review_data.md)
+          progress_section="\n\n---\n### 📝 Review Progress\n"
+          progress_section+="Click checkboxes to mark completion:\n"
+          
+          for reviewer in $reviewers_list; do
+            progress_section+="- [ ] ${reviewer}\n"
+          done
+          progress_section+="\n*Note: Checkboxes are interactive in GitHub comments.*"
+          
+          full_comment="${comment_header}${comment_body}${progress_section}"
+          
+          # 使用jq安全生成JSON（自动处理转义）
+          comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
+          
+          # 调试输出
+          echo "::group::Generated JSON Preview"
+          echo "$comment_json"
+          echo "::endgroup::"
+          
+          # 发送请求
+          response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
             -X POST \
-            -d "{\"body\": \"$comment\"}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+            -d "$comment_json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          
+          # 处理响应
+          if echo "$response" | grep -q '"message"'; then
+            echo "❌ Error: $(echo "$response" | jq .message)"
+            exit 1
+          else
+            echo "✅ Comment posted successfully!"
+            echo "View comment at: $(echo "$response" | jq .html_url)"
+          fi
