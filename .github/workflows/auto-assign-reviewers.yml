@@ -5,7 +5,7 @@
 #
 # Change Logs:
 # Date           Author       Notes
-# 2024-08-26     kurisaW      Initial version with reaction-based review tracking
+# 2024-08-26     kurisaW      Full interactive solution
 #
 
 name: Auto Reviewers Assignment
@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Get changed files
-        id: changed_files_step
+        id: changed_files
         run: |
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -39,7 +39,7 @@ jobs:
           cat changed_files.txt | sed 's/^/  - /'
 
       - name: Parse MAINTAINER file
-        id: parse_maintainer_step
+        id: parse_maintainer
         run: |
           awk '
             /^tag:/ { tag=$2 }
@@ -57,7 +57,7 @@ jobs:
           column -t -s "|" tag_data.csv | sed 's/^/  /'
 
       - name: Generate review data
-        id: generate_review_step
+        id: generate_review
         run: |
           changed_files=$(cat changed_files.txt)
           rm -f review_data.md triggered_reviewers.txt
@@ -69,159 +69,111 @@ jobs:
             fi
           done < tag_data.csv
 
-          # 生成去重审核者列表（关键修复）
+          # 生成去重审核者列表
           awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
 
-          # 生成评论内容
-          echo "## 📌 Code Ownership Review Request" > review_data.md
-          echo "" >> review_data.md
-          
-          while IFS='|' read -r tag path reviewers; do
-            if grep -qE "^$path(/|$)" changed_files.txt; then
-            {
-              echo "## 📌 Code Ownership Review Request"
-              echo ""
-              # 标签块...
-              echo ""
-              echo "### 📝 Review Progress"
-              echo "维护者请通过评论标记审核完成："
-              echo "1. 在下方评论区 @github-actions-bot"
-              echo "2. 发送指令：\`/review-done @yourname\`"
-              echo ""
-              echo "<details>"
-              echo "<summary><b>审核状态</b>（最后更新: $(date -u +'%Y-%m-%d %H:%M UTC')）</summary>"
-              echo ""
-              echo "### 当前状态"
-              while read -r reviewer; do
-                echo "- **${reviewer}**: ⌛ 等待审核"
-              done < unique_reviewers.txt
-              echo ""
-              echo "</details>"
-              echo ""
-              echo "[🔄 手动刷新状态](https://github.com/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml?query=event:pull_request)"
-            } > review_data.md
-            fi
-          done < tag_data.csv
-
-          # 添加审核进度模块
-          echo -e "\n### 📝 Review Progress" >> review_data.md
-          echo "维护者请通过评论标记审核完成：" >> review_data.md
-          echo "1. 在 PR 评论区 @github-actions-bot" >> review_data.md
-          echo "2. 发送指令：/review-done @yourname\n" >> review_data.md
-          cat unique_reviewers.txt | sed 's/^/- /' >> review_data.md
+          # 生成评论主体
+          {
+            echo "## 📌 Code Ownership Review Request"
+            echo ""
+            # 生成标签块
+            while IFS='|' read -r tag path reviewers; do
+              if grep -qE "^$path(/|$)" changed_files.txt; then
+                echo "### 🏷️ Tag: $tag"
+                echo "**Path:** \`$path\`  "
+                echo "**Reviewers:** $reviewers  "
+                echo "<details>"
+                echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
+                echo ""
+                grep -E "^$path(/|$)" changed_files.txt | sed 's/^/- /'
+                echo ""
+                echo "</details>"
+                echo ""
+              fi
+            done < tag_data.csv
+            
+            # 生成交互模块
+            echo "### 📝 Review Progress"
+            echo "维护者请执行以下操作："
+            echo "1. 评论 \`/review-done @你的用户名\` 标记审核完成"
+            echo "2. 点击下方链接刷新状态"
+            echo ""
+            echo "<details>"
+            echo "<summary><b>当前审核状态</b>（最后更新：未刷新）</summary>"
+            echo ""
+            echo "### 实时状态"
+            cat unique_reviewers.txt | while read -r reviewer; do
+              echo "- **${reviewer}**: ⌛ 等待审核"
+            done
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "[🔄 立即刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } > review_data.md
 
       - name: Post/Update comment
         id: post_comment
         run: |
-          # 获取或创建评论（省略 reactions 权限）
-          comment_body=$(cat review_data.md)
+          # 查找已有评论
           existing_comment=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body}')
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body} | @base64')
           
+          # 创建或更新评论
           if [[ -n "$existing_comment" ]]; then
-            comment_id=$(echo "$existing_comment" | jq -r '.id')
-            # 更新现有评论
+            comment_id=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .id)
+            echo "Updating existing comment $comment_id"
             response=$(curl -s -X PATCH \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$comment_body" '{body: $body}')" \
+              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
               "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id")
           else
-            # 创建新评论
+            echo "Creating new comment"
             response=$(curl -s -X POST \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$comment_body" '{body: $body}')" \
+              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
             comment_id=$(echo "$response" | jq -r .id)
           fi
           echo "comment_id=$comment_id" >> $GITHUB_ENV
 
-      - name: Track review status
-        run: |
-          # 获取所有相关评论
-          comments=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-          
-          # 构建带格式的状态报告
-          status_report=$'\n### 当前审核状态（自动更新于 '
-          status_report+=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          status_report+=$'）\n\n'
-
-          while read -r reviewer; do
-            if echo "$comments" | grep -q "/review-done ${reviewer}"; then
-              status_report+=$'✅ **'"${reviewer}** 已审核\n"
-            else
-              status_report+=$'⌛ **'"${reviewer}** 等待审核\n"
-            fi
-          done < unique_reviewers.txt
-
-          # 更新评论内容
-          current_body=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}" | jq -r .body)
-          
-          updated_body="${current_body%%### 当前审核状态*}"
-          updated_body+="$status_report"
-          
-          curl -s -X PATCH \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -d "$(jq -n --arg body "$updated_body" '{body: $body}')" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}"
-
-      - name: Setup reaction trackers
-        run: |
-          # 为每个审核者添加锚点反应
-          while read -r reviewer; do
-            # 添加唯一标识反应
-            curl -s -X POST \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}/reactions" \
-              -d '{"content":"eyes"}'  # 👀 作为追踪锚点
-          done < unique_reviewers.txt
-
-      - name: Process comment commands
+      - name: Process review commands
         if: github.event_name == 'issue_comment'
         run: |
-          # 仅处理包含指令的评论
           comment_body="${{ github.event.comment.body }}"
           case "$comment_body" in
             */review-done*)
-              echo "处理审核完成指令..."
               reviewer=$(echo "$comment_body" | sed -nE 's/.*\/review-done +@([a-zA-Z0-9_-]+).*/\1/p')
-              # 记录审核时间
-              date -u +"%Y-%m-%d %H:%M UTC" >> "review_status.txt"
-              echo "$reviewer" >> "review_status.txt"
-              ;;
-            */refresh*)
-              echo "手动触发状态刷新..."
+              timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
+              echo "Marking $reviewer as reviewed at $timestamp"
+              echo "$timestamp" >> review_status.txt
+              echo "$reviewer" >> review_status.txt
               ;;
           esac
 
-      - name: Update review status
+      - name: Update status display
         run: |
-          # 加载审核记录
-          declare -A reviewed
+          # 加载审核状态
+          declare -A status_map
           if [[ -f "review_status.txt" ]]; then
             while read -r line; do
               if [[ "$line" =~ ^[0-9]{4}- ]]; then
-                current_date="$line"
+                current_time="$line"
               else
-                reviewed["$line"]="$current_date"
+                status_map["$line"]="$current_time"
               fi
             done < review_status.txt
           fi
 
-          # 生成动态状态报告
-          status_report=$'### 当前状态\n'
+          # 生成状态报告
+          status_report=$'### 实时状态\n\n'
           while read -r reviewer; do
             user_name="${reviewer//@/}"
-            if [[ -n "${reviewed[$user_name]}" ]]; then
-              status_report+=$'- ✅ **'"${reviewer}** 审核于 ${reviewed[$user_name]}\n"
+            if [[ -n "${status_map[$user_name]}" ]]; then
+              status_report+="- ✅ **${reviewer}** 审核于 ${status_map[$user_name]}\n"
             else
-              status_report+=$'- ⌛ **'"${reviewer}** 等待审核\n"
+              status_report+="- ⌛ **${reviewer}** 等待审核\n"
             fi
           done < unique_reviewers.txt
 
@@ -230,16 +182,16 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}" | jq -r .body)
           
-          # 使用awk保持原有结构
+          # 使用awk精准替换状态块
           updated_body=$(echo "$current_body" | awk -v new_status="$status_report" '
-            /<summary><b>审核状态/,/<\/details>/ {
+            /<summary><b>当前审核状态/,/<\/details>/ {
               if ($0 ~ /<details>/) print
-              if ($0 ~ /<summary>/) print
-              if ($0 ~ /### 当前状态/) {
+              if ($0 ~ /<summary>/) sub(/未刷新/, strftime("%Y-%m-%d %H:%M UTC"))
+              if ($0 ~ /### 实时状态/) {
                 print new_status
                 while (getline > 0 && !/<\/details>/) {}
+                next
               }
-              next
             }
             { print }
           ')
