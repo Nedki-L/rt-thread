@@ -1,8 +1,9 @@
-name: Auto Reviewers Assignment
+name: Code Review Assistant
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   assign-reviewers:
@@ -10,12 +11,13 @@ jobs:
     permissions:
       issues: write
       pull-requests: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Get changed files
-        id: changed_files_step
+        id: changed_files
         run: |
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -27,7 +29,7 @@ jobs:
           cat changed_files.txt | sed 's/^/  - /'
 
       - name: Parse MAINTAINER file
-        id: parse_maintainer_step
+        id: parse_maintainer
         run: |
           awk '
             /^tag:/ { tag=$2 }
@@ -41,129 +43,61 @@ jobs:
               print tag "|" path "|" github_ids
             }
           ' MAINTAINER > tag_data.csv
-          echo "✅ Parsed data:"
-          column -t -s "|" tag_data.csv | sed 's/^/  /'
 
       - name: Generate review data
-        id: generate_review_step
+        id: generate_review
         run: |
           changed_files=$(cat changed_files.txt)
-          rm -f review_data.md triggered_reviewers.txt
-          
-          # 初始化评论内容
-          echo "## 📌 Code Ownership Review Request" > review_data.md
-          echo "" >> review_data.md
-          
-          # 生成标签块并记录实际触发审核者
-          while IFS='|' read -r tag path reviewers; do
-            matched_files=$(grep -E "^$path(/|$)" changed_files.txt || true)
-            if [[ -n "$matched_files" ]]; then
-              # 写入标签块
-              {
+          rm -f review_data.md
+
+          {
+            echo "## 📌 Code Review Assignment"
+            echo ""
+            
+            # 代码所有权区块
+            while IFS='|' read -r tag path reviewers; do
+              if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
                 echo "**Reviewers:** $reviewers  "
                 echo "<details>"
                 echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
                 echo ""
-                echo "$matched_files" | sed 's/^/- /'
+                grep -E "^$path(/|$)" changed_files.txt | sed 's/^/- /'
                 echo ""
                 echo "</details>"
                 echo ""
-              } >> review_data.md
-              
-              # 记录当前标签的审核者（关键修复）
-              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
-            fi
-          done < tag_data.csv
-      
-          # 动态生成审核者列表（仅包含实际触发人员）
-          if [[ -f triggered_reviewers.txt ]]; then
-            awk '!seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt  # 去重并保留顺序
+              fi
+            done < tag_data.csv
             
-            # 添加审核进度模块
-            if [[ -s unique_reviewers.txt ]]; then
-              {
-                echo "---"
-                echo "### 📝 Review Progress"
-                echo "Click checkboxes to mark completion:"
-                while read -r reviewer; do
-                  [[ -n "$reviewer" ]] && echo "- [ ] $reviewer"
-                done < unique_reviewers.txt
-                echo ""
-                echo "*Note: Checkboxes are interactive in GitHub comments.*"
-              } >> review_data.md
-            fi
-          fi
-      
-          # 设置环境变量
-          if [[ -s review_data.md ]]; then
-            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
-            echo "📝 Generated review data:"
-            cat review_data.md
-          else
-            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-          fi
-          # 设置环境变量
-          if [[ -s review_data.md ]]; then
-            echo "REVIEW_DATA_EXISTS=true" >> $GITHUB_ENV
-            echo "📝 Generated review data:"
-            cat review_data.md
-          else
-            echo "REVIEW_DATA_EXISTS=false" >> $GITHUB_ENV
-          fi
+            # 交互提示区块
+            echo "### 📝 Review Instructions"
+            echo "1. 维护者请检查代码变更"
+            echo "2. 确认审核通过后评论 \`LGTM\`"
+            echo "3. PR合并前需至少一位维护者确认"
+            echo ""
+            echo "[🔄 重新运行检查](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+          } > review_data.md
 
-      - name: Delete old comments
-        if: env.REVIEW_DATA_EXISTS == 'true'
+      - name: Post/Update comment
+        id: post_comment
         run: |
-          echo "::group::Cleaning up previous comments..."
-          
-          # 获取所有评论（处理分页）
-          page=1
-          all_comments=""
-          while true; do
-            comments=$(curl -s \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?per_page=100&page=$page")
-            
-            # 判断是否还有数据
-            if [[ $(echo "$comments" | jq '. | length') -eq 0 ]]; then
-              break
-            fi
-            
-            all_comments+=$(echo "$comments" | jq -c '.[]')
-            ((page++))
-          done
-
-          # 提取需要删除的评论ID
-          comment_ids=$(echo "$all_comments" | jq -r 'select(.user.login == "github-actions[bot]") | .id')
-          
-          echo "Found ${#comment_ids[@]} bot comments to delete"
-          
-          # 删除所有历史评论
-          for id in $comment_ids; do
-            echo "Deleting comment $id"
-            curl -s -X DELETE \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$id"
-          done
-          echo "::endgroup::"
-
-      - name: Post structured comment
-        if: env.REVIEW_DATA_EXISTS == 'true'
-        run: |
-          full_comment=$(cat review_data.md)
-          
-          # 安全生成JSON（自动处理换行符）
-          comment_json=$(jq -n --arg body "$full_comment" '{body: $body}')
-          
-          # 发送请求
-          response=$(curl -s \
+          existing_comment=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -X POST \
-            -d "$comment_json" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body} | @base64')
           
-          echo "✅ Comment posted at: $(echo "$response" | jq .html_url)"
+          if [[ -n "$existing_comment" ]]; then
+            comment_id=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .id)
+            echo "Updating existing comment $comment_id"
+            response=$(curl -s -X PATCH \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id")
+          else
+            echo "Creating new comment"
+            response=$(curl -s -X POST \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          fi
