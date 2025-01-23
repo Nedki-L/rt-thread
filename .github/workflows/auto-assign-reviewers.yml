@@ -4,6 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
+  issue_comment:
+    types: [created]
 
 jobs:
   assign-reviewers:
@@ -25,8 +27,6 @@ jobs:
             jq -r '.[].filename')
           
           echo "$changed_files" | grep -v '^MAINTAINER$' > changed_files.txt
-          echo "🔄 Changed files:"
-          cat changed_files.txt | sed 's/^/  - /'
 
       - name: Parse MAINTAINER file
         id: parse_maintainer
@@ -44,12 +44,49 @@ jobs:
             }
           ' MAINTAINER > tag_data.csv
 
+      - name: Generate reviewers list
+        id: generate_reviewers
+        run: |
+          rm -f triggered_reviewers.txt
+          while IFS='|' read -r tag path reviewers; do
+            if grep -qE "^$path(/|$)" changed_files.txt; then
+              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
+            fi
+          done < tag_data.csv
+          awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
+
+      - name: Get approval status
+        id: get_approval
+        run: |
+          # 获取所有评论
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # 提取有效审核记录
+          echo 'declare -A approvals' > approval_data.sh
+          jq -r '.[] | select(.user.login != "github-actions[bot]") | 
+            select(.body | test("\\bLGTM\\b"; "i")) | 
+            "approvals[\"@\(.user.login)\"]=\"\(.created_at)\""' <<< "$comments" >> approval_data.sh
+
+          # 生成状态报告
+          {
+            echo "### 当前状态"
+            while read -r reviewer; do
+              user="${reviewer/@/}"
+              if [ -n "${approvals["$reviewer"]}" ]; then
+                timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
+                echo "- ✅ **$reviewer** 审核于 $timestamp"
+              else
+                echo "- ⌛ **$reviewer** 等待审核"
+              fi
+            done < unique_reviewers.txt
+          } > review_status.md
+
       - name: Generate review data
         id: generate_review
         run: |
-          changed_files=$(cat changed_files.txt)
-          rm -f review_data.md
-
+          current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
           {
             echo "## 📌 Code Review Assignment"
             echo ""
@@ -70,12 +107,18 @@ jobs:
               fi
             done < tag_data.csv
             
-            # 交互提示区块
-            echo "---"
+            # 审核状态区块
+            echo "<details>"
+            echo "<summary><b>审核状态</b>（最后更新: $current_time）</summary>"
+            echo ""
+            cat review_status.md
+            echo ""
+            echo "</details>"
+
+            # 操作指引
             echo "### 📝 Review Instructions"
-            echo "1.Maintainers can check for code changes by clicking on [🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-            echo "2.Comment on \`LGTM\` after the maintainer confirms the approval"
-            echo "3.PR must be confirmed by at least one maintainer before merging"
+            echo "1. 维护者评论 \`LGTM\` 确认审核通过"
+            echo "2. [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
           } > review_data.md
 
       - name: Post/Update comment
