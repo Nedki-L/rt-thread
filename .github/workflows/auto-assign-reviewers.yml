@@ -1,15 +1,3 @@
-#
-# Copyright (c) 2006-2025, RT-Thread Development Team
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-# Change Logs:
-# Date           Author       Notes
-# 2025-01-21     kurisaW      Initial version
-#
-
-# Script Function Description: Assign PR reviews based on the MAINTAINERS list.
-
 name: Auto Review Assistant
 
 on:
@@ -21,6 +9,9 @@ on:
 
 jobs:
   assign-reviewers:
+    concurrency:
+      group: assign-reviewers-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-22.04
     if: github.repository_owner == 'Nedki-L'
     permissions:
@@ -34,17 +25,27 @@ jobs:
       - name: Get changed files
         id: changed_files
         run: |
-          changed_files=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
-            jq -r '.[].filename')
-          
-          echo "$changed_files" | grep -v '^MAINTAINERS$' > changed_files.txt
+          # 处理分页获取所有变更文件
+          page=1
+          echo "" > changed_files.txt
+          while true; do
+            response=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?page=$page&per_page=100")
+            
+            files=$(echo "$response" | jq -r '.[].filename')
+            if [ -z "$files" ]; then
+              break
+            fi
+            echo "$files" | grep -v '^MAINTAINERS$' >> changed_files.txt
+            page=$((page+1))
+          done
 
       - name: Parse MAINTAINERS file
         id: parse_maintainer
         run: |
           awk '
+            BEGIN { FS="[ \t]*:[ \t]*" }
             /^tag:/ { tag=$2 }
             /^path:/ { path=$2 }
             /^owners:/ {
@@ -56,6 +57,8 @@ jobs:
               print tag "|" path "|" github_ids
             }
           ' MAINTAINERS > tag_data.csv
+          echo "Generated tag data:"
+          cat tag_data.csv
 
       - name: Generate reviewers list
         id: generate_reviewers
@@ -78,6 +81,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
 
+          # 生成审批数据
           echo '#!/bin/bash' > approval_data.sh
           echo 'declare -A approvals=()' >> approval_data.sh
           
@@ -94,15 +98,16 @@ jobs:
           chmod +x approval_data.sh
           source ./approval_data.sh
 
+          # 生成状态报告
           {
             echo "---"
             echo "### 📊 Current Review Status (Last Updated: $current_time)"
             while read -r reviewer; do
               if [[ -n "${approvals[$reviewer]}" ]]; then
                 timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
-                echo "- ✅ **$reviewer** Reviewed On $timestamp"
+                echo "- ✅ **${reviewer#@}** Reviewed On $timestamp"
               else
-                echo "- ⌛ **$reviewer** Pending Review"
+                echo "- ⌛ **${reviewer#@}** Pending Review"
               fi
             done < unique_reviewers.txt
           } > review_status.md
@@ -110,7 +115,7 @@ jobs:
       - name: Generate review data
         id: generate_review
         run: |
-          # 获取历史评论中所有被@过的审核者
+          # 获取历史@记录
           mentioned_users=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
@@ -119,35 +124,32 @@ jobs:
             grep -oE '@\w+' | sort -u)
           
           echo "$mentioned_users" > mentioned_users.txt
-      
-          # 生成智能Reviewers列表
+
+          # 生成智能评论内容
           {
             echo "## 📌 Code Review Assignment"
             echo ""
-            
+
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
                 echo -n "**Reviewers:** "
-                
+
                 # 处理每个审核者的@逻辑
-                processed_reviewers=""
+                processed_reviewers=()
                 for reviewer in $reviewers; do
-                  if grep -q "$reviewer" mentioned_users.txt; then
-                    # 已@过的显示纯文本
-                    processed_reviewers+=" $(echo "$reviewer" | tr -d '@')"
+                  if grep -q "^$reviewer$" mentioned_users.txt; then
+                    processed_reviewers+=("${reviewer#@}")
                   else
-                    # 新审核者保持@
-                    processed_reviewers+=" $reviewer"
+                    processed_reviewers+=("$reviewer")
                   fi
                 done
-                
+
                 # 格式化输出
-                processed_reviewers=$(echo "$processed_reviewers" | sed 's/^ //;s/ /, /g')
-                echo "$processed_reviewers  "
-                
-                # 剩余部分保持不变...
+                echo "$(IFS=', '; echo "${processed_reviewers[*]}")  "
+
+                # 显示变更文件
                 echo "<details>"
                 echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
                 echo ""
@@ -179,22 +181,47 @@ jobs:
       - name: Post/Update comment
         id: post_comment
         run: |
-          existing_comment=$(curl -s \
+          # 获取现有评论
+          existing_comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
             jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body} | @base64')
-          
-          if [[ -n "$existing_comment" ]]; then
-            comment_id=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .id)
-            echo "Updating existing comment $comment_id"
-            response=$(curl -s -X PATCH \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id")
-          else
-            echo "Creating new comment"
-            response=$(curl -s -X POST \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # 生成新评论内容
+          new_body=$(cat review_data.md)
+          update_needed="false"
+          comment_id=""
+
+          # 比较评论内容差异
+          while IFS= read -r comment; do
+            if [[ -n "$comment" ]]; then
+              decoded=$(echo "$comment" | base64 -d)
+              current_id=$(echo "$decoded" | jq -r .id)
+              current_body=$(echo "$decoded" | jq -r .body)
+
+              if [[ "$current_body" != "$new_body" ]]; then
+                update_needed="true"
+                comment_id="$current_id"
+              else
+                echo "内容未变化，无需更新评论。"
+                exit 0
+              fi
+            fi
+          done <<< "$existing_comments"
+
+          # 执行评论更新
+          if [[ "$update_needed" == "true" || -z "$existing_comments" ]]; then
+            if [[ -n "$comment_id" ]]; then
+              echo "更新现有评论 $comment_id"
+              curl -s -X PATCH \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -d "$(jq -n --arg body "$new_body" '{body: $body}')" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+            else
+              echo "新建评论"
+              curl -s -X POST \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -d "$(jq -n --arg body "$new_body" '{body: $body}')" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+            fi
           fi
