@@ -86,7 +86,7 @@ jobs:
 
           # 生成状态报告
           {
-            echo "### Current Review Status"
+            echo "### 📊 Current Review Status (Last Updated: $current_time)"
             while read -r reviewer; do
               if [[ -n "${approvals[$reviewer]}" ]]; then
                 timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
