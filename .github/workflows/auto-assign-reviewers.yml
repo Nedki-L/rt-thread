@@ -258,7 +258,7 @@ jobs:
 
       - name: Update mention cache
         uses: actions/cache/save@v3
-        if: always()
+        if: ${{ always() }}
         with:
           path: mentioned_users.txt
           key: pr-${{ github.event.pull_request.number }}-mentions
