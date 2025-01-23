@@ -14,7 +14,6 @@ jobs:
       pull-requests: write
       contents: read
     outputs:
-      comment_id: ${{ steps.post_comment.outputs.comment_id }}
       run_id: ${{ github.run_id }}
     steps:
       - name: Checkout code
@@ -104,7 +103,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reviewers-${{ github.run_id }}
-          path: unique_reviewers.txt
 
       - name: Post/Update comment
         id: post_comment
@@ -140,8 +138,14 @@ jobs:
       contents: read
     if: |
       github.event_name == 'issue_comment' &&
-      contains(github.event.comment.body, 'LGTM')
+      contains(github.event.comment.body, 'LGTM')  # 不区分大小写
     steps:
+      - name: Debug print context
+        run: |
+          echo "Event Name: ${{ github.event_name }}"
+          echo "Comment Body: ${{ github.event.comment.body }}"
+          echo "Run ID: ${{ needs.assign-reviewers.outputs.run_id }}"
+          
       - name: Download reviewers list
         uses: actions/download-artifact@v4
         with:
