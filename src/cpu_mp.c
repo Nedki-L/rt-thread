@@ -11,7 +11,7 @@
  * 2024-01-25     Shell        Using rt_exit_critical_safe
  */
 #include <rthw.h>
-#include <rtthread.h>ddd
+#include <rtthread.h>
 
 #ifdef RT_USING_SMART
 #include <lwp.h>
