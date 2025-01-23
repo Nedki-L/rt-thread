@@ -58,23 +58,37 @@ jobs:
       - name: Get approval status
         id: get_approval
         run: |
-          # 获取所有评论
+          # 获取有效审核者列表
+          reviewers=$(cat unique_reviewers.txt | tr '\n' '|')
+
+          # 获取符合要求的评论
           comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
 
-          # 提取有效审核记录
-          echo 'declare -A approvals' > approval_data.sh
-          jq -r '.[] | select(.user.login != "github-actions[bot]") | 
-            select(.body | test("\\bLGTM\\b"; "i")) | 
-            "approvals[\"@\(.user.login)\"]=\"\(.created_at)\""' <<< "$comments" >> approval_data.sh
+          # 生成审核记录（修复语法错误）
+          echo '#!/bin/bash' > approval_data.sh
+          echo 'declare -A approvals=()' >> approval_data.sh
+          
+          jq -r --arg reviewers "$reviewers" '
+            .[] | 
+            select(.user.login != "github-actions[bot]") |
+            select(.body | test("^\\s*LGTM\\s*$"; "i")) |
+            .user.login as $user |
+            "@\($user)" as $mention |
+            select($mention | inside($reviewers)) |
+            "approvals[\"\($mention)\"]=\"\(.created_at)\"" 
+          ' <<< "$comments" >> approval_data.sh
+
+          # 加载审核数据
+          chmod +x approval_data.sh
+          source ./approval_data.sh
 
           # 生成状态报告
           {
             echo "### 当前状态"
             while read -r reviewer; do
-              user="${reviewer/@/}"
-              if [ -n "${approvals["$reviewer"]}" ]; then
+              if [[ -n "${approvals[$reviewer]}" ]]; then
                 timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
                 echo "- ✅ **$reviewer** 审核于 $timestamp"
               else
