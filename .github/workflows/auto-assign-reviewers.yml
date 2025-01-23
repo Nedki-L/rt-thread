@@ -122,9 +122,16 @@ jobs:
           fi
           echo "comment_id=$comment_id" >> $GITHUB_ENV
 
+      - name: Upload reviewers list
+        id: upload_reviewers
+        uses: actions/upload-artifact@v3
+        with:
+          name: reviewers
+          path: unique_reviewers.txt
+
   process-approval:
     runs-on: ubuntu-latest
-    needs: [assign-reviewers]
+    needs: assign-reviewers
     permissions:
       issues: write
       pull-requests: write
@@ -133,83 +140,59 @@ jobs:
       github.event_name == 'issue_comment' &&
       contains(github.event.comment.body, 'LGTM')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Validate reviewer
-        id: validate_reviewer
+      - name: Download reviewers list
+        uses: actions/download-artifact@v3
+        with:
+          name: reviewers
+          
+      - name: Validate maintainer
+        id: validate
         run: |
+          # 获取评论者信息
           commenter="${{ github.event.comment.user.login }}"
-          pr_author="${{ github.event.issue.user.login }}"
-          pr_number="${{ github.event.issue.number }}"
           
-          # Get valid reviewers
-          curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/$pr_number/files" | \
-            jq -r '.[].filename' | grep -v '^MAINTAINER$' > changed_files.txt
-
-          awk '
-            /^tag:/ { tag=$2 }
-            /^path:/ { path=$2 }
-            /^owners:/ {
-              split($0, parts, /[()]/)
-              for (i=2; i<=length(parts); i+=2) {
-                print "@" parts[i]
-              }
-            }
-          ' MAINTAINER | sort -u > valid_reviewers.txt
-
-          # Extract mentioned user from comment
-          mentioned_user=$(echo "${{ github.event.comment.body }}" | grep -oE '@[a-zA-Z0-9_-]+' | head -1)
-          
-          # Check validation
-          if grep -q "$mentioned_user" valid_reviewers.txt && [ "$commenter" = "${mentioned_user#@}" ]; then
+          # 从审核人列表验证身份
+          if grep -q "@$commenter" unique_reviewers.txt; then
             echo "VALID_REVIEWER=true" >> $GITHUB_ENV
-            echo "REVIEWER_NAME=${mentioned_user#@}" >> $GITHUB_ENV
+            echo "REVIEWER=@$commenter" >> $GITHUB_ENV
           else
-            echo "::warning::Invalid approval from $commenter"
+            echo "::warning::用户 $commenter 无审核权限"
             exit 0
           fi
 
       - name: Update review status
         if: env.VALID_REVIEWER == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
-          echo "REVIEWER_NAME=$REVIEWER_NAME"
-          echo "TIMESTAMP=$timestamp"
+          # 生成时间戳
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
-          # Get existing comment
+          # 获取原始评论内容
           comment_body=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ needs.assign-reviewers.outputs.comment_id }}" | \
-            jq -r .body)
+            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ needs.assign-reviewers.outputs.comment_id }}")
 
-          # Update status display
-          updated_body=$(echo "$comment_body" | awk -v reviewer="@$REVIEWER_NAME" -v ts="$timestamp" '
-            BEGIN { updated = 0 }
-            {
-              if ($0 ~ "- ⌛ \\*\\*" reviewer "\\*\\*") {
-                sub(/⌛/, "✅", $0)
-                sub(/等待审核/, "审核于 " ts, $0)
-                updated = 1
-              }
-              print
-            }
-            END {
-              if (!updated) {
-                print "ERROR: Reviewer not found in list"
-              }
-            }'
-          )
+          # 更新状态显示
+          updated_body=$(jq -r --arg reviewer "$REVIEWER" --arg ts "$timestamp" '
+            .body | 
+            split("<details>") |
+            (.[0] | gsub("最后更新：.*"; "最后更新：\($ts)")) +
+            "<details>" +
+            (.[1] | 
+              split("### 实时状态") |
+              .[0] +
+              "### 实时状态\n\n" +
+              (.[1] | 
+                gsub("- ⌛ \\*\\*\($reviewer)\\*\\* 等待审核"; "- ✅ **\($reviewer)** 审核于 \($ts)") |
+                gsub("- ✅ \\*\\*\($reviewer)\\*\\* 审核于 .*"; "- ✅ **\($reviewer)** 审核于 \($ts)")
+              )
+            )
+          ' <<< "$comment_body")
 
-          # Update timestamp in summary
-          updated_body=$(echo "$updated_body" | sed "s/最后更新：.*/最后更新：$(date -u +'%Y-%m-%d %H:%M UTC')/")
-
-          # Commit changes
+          # 提交更新
           curl -s -X PATCH \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
             -d "$(jq -n --arg body "$updated_body" '{body: $body}')" \
             "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ needs.assign-reviewers.outputs.comment_id }}"
 
-          echo "✔️ Successfully updated review status for @$REVIEWER_NAME"
+          echo "✔️ 已更新审核状态：$REVIEWER 于 $timestamp"
