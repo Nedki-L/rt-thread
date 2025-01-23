@@ -121,18 +121,27 @@ jobs:
               fi
             done < tag_data.csv
 
-            # 恢复原有操作指引并优化格式
-            echo "---"
-            echo "### 📝 Review Instructions"
-            echo "1. Maintainers can check for code changes by clicking on [🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-            echo "2. Comment \`LGTM/lgtm\` after confirming approval"
-            echo "3. PR must be confirmed by at least one maintainer before merging"
+            echo "<details>"
+            echo "<summary><b>Review Status</b>（Last Updated: $current_time）</summary>"
             echo ""
-            echo "> ℹ️ Refresh operation requires repository **Write** permission."
-
-            # 审核状态区块
-            echo "---"
             cat review_status.md
+            echo ""
+            echo "</details>"
+            echo ""
+
+            echo "### 📝 Review Instructions"
+            echo ""
+            echo "1. **Maintainers can refresh the review status by clicking here:** [🔄 Refresh Status](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo "   **维护者可以通过单击此处来刷新审查状态:** [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo ""
+            echo "2. **Comment \`LGTM/lgtm\` after confirming approval**"
+            echo "   **确认审核通过后评论 \`LGTM/lgtm\`**"
+            echo ""
+            echo "3. **PR must be confirmed by at least one maintainer before merging**"
+            echo "   **PR合并前需至少一位维护者确认**"
+            echo ""
+            echo "> ℹ️ **Refresh operation requires repository Write permission.**"
+            echo "> ℹ️ **刷新操作需要仓库写入权限。**"
           } > review_data.md
 
       - name: Post/Update comment
