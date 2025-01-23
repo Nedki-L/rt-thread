@@ -130,16 +130,19 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
-          # 生成状态报告
-          status_report=$'\n### 当前审核状态\n'
+          # 构建带格式的状态报告
+          status_report=$'\n### 当前审核状态（自动更新于 '
+          status_report+=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          status_report+=$'）\n\n'
+
           while read -r reviewer; do
             if echo "$comments" | grep -q "/review-done ${reviewer}"; then
-              status_report+="✅ ${reviewer}\n"
+              status_report+=$'✅ **'"${reviewer}** 已审核\n"
             else
-              status_report+="⌛ ${reviewer}\n"
+              status_report+=$'⌛ **'"${reviewer}** 等待审核\n"
             fi
           done < unique_reviewers.txt
-          
+
           # 更新评论内容
           current_body=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
