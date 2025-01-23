@@ -58,15 +58,13 @@ jobs:
       - name: Get approval status
         id: get_approval
         run: |
-          # 获取有效审核者列表
+          current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
           reviewers=$(cat unique_reviewers.txt | tr '\n' '|')
 
-          # 获取符合要求的评论
           comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
 
-          # 生成审核记录（修复语法错误）
           echo '#!/bin/bash' > approval_data.sh
           echo 'declare -A approvals=()' >> approval_data.sh
           
@@ -80,12 +78,11 @@ jobs:
             "approvals[\"\($mention)\"]=\"\(.created_at)\"" 
           ' <<< "$comments" >> approval_data.sh
 
-          # 加载审核数据
           chmod +x approval_data.sh
           source ./approval_data.sh
 
-          # 生成状态报告
           {
+            echo "---"
             echo "### 📊 Current Review Status (Last Updated: $current_time)"
             while read -r reviewer; do
               if [[ -n "${approvals[$reviewer]}" ]]; then
@@ -105,7 +102,6 @@ jobs:
             echo "## 📌 Code Review Assignment"
             echo ""
 
-            # 代码所有权区块
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
@@ -121,14 +117,9 @@ jobs:
               fi
             done < tag_data.csv
 
-            echo "<details>"
-            echo "<summary><b>Review Status</b>（Last Updated: $current_time）</summary>"
-            echo ""
             cat review_status.md
-            echo ""
-            echo "</details>"
-            echo ""
 
+            echo "---"
             echo "### 📝 Review Instructions"
             echo ""
             echo "1. **Maintainers can refresh the review status by clicking here:** [🔄 Refresh Status](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
@@ -141,7 +132,7 @@ jobs:
             echo "   **PR合并前需至少一位维护者确认**"
             echo ""
             echo "> ℹ️ **Refresh operation requires repository Write permission.**"
-            echo "> ℹ️ **刷新操作需要仓库写入权限。**"
+            echo ">    **刷新操作需要仓库写入权限。**"
           } > review_data.md
 
       - name: Post/Update comment
