@@ -110,16 +110,44 @@ jobs:
       - name: Generate review data
         id: generate_review
         run: |
-          current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
+          # 获取历史评论中所有被@过的审核者
+          mentioned_users=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | .body' | \
+            grep -E '^\*\*Reviewers:\*\*' | \
+            grep -oE '@\w+' | sort -u)
+          
+          echo "$mentioned_users" > mentioned_users.txt
+      
+          # 生成智能Reviewers列表
           {
             echo "## 📌 Code Review Assignment"
             echo ""
-
+            
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
-                echo "**Reviewers:** $reviewers  "
+                echo -n "**Reviewers:** "
+                
+                # 处理每个审核者的@逻辑
+                processed_reviewers=""
+                for reviewer in $reviewers; do
+                  if grep -q "$reviewer" mentioned_users.txt; then
+                    # 已@过的显示纯文本
+                    processed_reviewers+=" $(echo "$reviewer" | tr -d '@')"
+                  else
+                    # 新审核者保持@
+                    processed_reviewers+=" $reviewer"
+                  fi
+                done
+                
+                # 格式化输出
+                processed_reviewers=$(echo "$processed_reviewers" | sed 's/^ //;s/ /, /g')
+                echo "$processed_reviewers  "
+                
+                # 剩余部分保持不变...
                 echo "<details>"
                 echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
                 echo ""
