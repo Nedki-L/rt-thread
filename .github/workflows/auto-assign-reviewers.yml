@@ -57,19 +57,44 @@ jobs:
       - name: Generate review data
         id: generate_review_step
         run: |
-          # ... [保留原有生成review_data.md逻辑] ...
+          changed_files=$(cat changed_files.txt)
+          rm -f review_data.md triggered_reviewers.txt
 
-          # 生成审核进度模板
-          echo -e "\n\n### 📝 Review Progress Tracking" >> review_data.md
-          echo "请审核者在您的用户名旁添加 ✅ 表情标记审核完成：" >> review_data.md
-          echo "1. 找到您的用户名" >> review_data.md
-          echo "2. 点击评论右上角表情按钮" >> review_data.md
-          echo "3. 选择 ✅ 表情并提交\n" >> review_data.md
+          # 生成触发审核者列表
+          while IFS='|' read -r tag path reviewers; do
+            if grep -qE "^$path(/|$)" changed_files.txt; then
+              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
+            fi
+          done < tag_data.csv
 
-          # 生成可追踪的审核者列表
-          awk '!seen[$0]++' triggered_reviewers.txt | while read -r reviewer; do
-            echo "- **${reviewer}**  [查看状态](#status-${reviewer//@/})" >> review_data.md
-          done
+          # 生成去重审核者列表（关键修复）
+          awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
+
+          # 生成评论内容
+          echo "## 📌 Code Ownership Review Request" > review_data.md
+          echo "" >> review_data.md
+          
+          while IFS='|' read -r tag path reviewers; do
+            if grep -qE "^$path(/|$)" changed_files.txt; then
+              {
+                echo "### 🏷️ Tag: $tag"
+                echo "**Path:** \`$path\`  "
+                echo "**Reviewers:** $reviewers  "
+                echo "<details>"
+                echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
+                grep -E "^$path(/|$)" changed_files.txt | sed 's/^/- /'
+                echo "</details>"
+                echo ""
+              } >> review_data.md
+            fi
+          done < tag_data.csv
+
+          # 添加审核进度模块
+          echo -e "\n### 📝 Review Progress" >> review_data.md
+          echo "维护者请通过评论标记审核完成：" >> review_data.md
+          echo "1. 在 PR 评论区 @github-actions-bot" >> review_data.md
+          echo "2. 发送指令：/review-done @yourname\n" >> review_data.md
+          cat unique_reviewers.txt | sed 's/^/- /' >> review_data.md
 
       - name: Post/Update comment
         id: post_comment
@@ -100,22 +125,18 @@ jobs:
 
       - name: Track review status
         run: |
-          # 通过搜索评论内容获取审核状态（替代 reactions API）
-          status_report=$'\n### 审核状态（最终版）\n'
-          status_report+="维护者请通过以下方式标记审核完成：\n"
-          status_report+="1. 在 PR 评论区 @github-actions-bot\n"
-          status_report+="2. 发送指令：/review-done @yourname\n\n"
-          
           # 获取所有相关评论
           comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
+          # 生成状态报告
+          status_report=$'\n### 当前审核状态\n'
           while read -r reviewer; do
             if echo "$comments" | grep -q "/review-done ${reviewer}"; then
-              status_report+="✅ ${reviewer} 已审核\n"
+              status_report+="✅ ${reviewer}\n"
             else
-              status_report+="⌛ ${reviewer} 待审核\n"
+              status_report+="⌛ ${reviewer}\n"
             fi
           done < unique_reviewers.txt
           
@@ -124,7 +145,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}" | jq -r .body)
           
-          updated_body="${current_body%%### 审核状态*}"
+          updated_body="${current_body%%### 当前审核状态*}"
           updated_body+="$status_report"
           
           curl -s -X PATCH \
