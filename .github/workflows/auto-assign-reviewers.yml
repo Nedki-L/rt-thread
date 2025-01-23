@@ -71,12 +71,13 @@ jobs:
             done < tag_data.csv
             
             # 交互提示区块
+            echo "---"
             echo "### 📝 Review Instructions"
-            echo "1. 维护者请检查代码变更"
-            echo "2. 确认审核通过后评论 \`LGTM\`"
-            echo "3. PR合并前需至少一位维护者确认"
+            echo "1.Maintainers should check for code changes by re-running CI with `🔄 Refresh status now` below"
+            echo "2.Comment on 'LGTM' after the maintainer confirms the approval"
+            echo "3.PR must be confirmed by at least one maintainer before merging"
             echo ""
-            echo "[🔄 立即刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "[🔄 Refresh status now` below](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           } > review_data.md
 
       - name: Post/Update comment
