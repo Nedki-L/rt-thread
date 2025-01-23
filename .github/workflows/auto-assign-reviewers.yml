@@ -15,11 +15,10 @@ jobs:
       contents: read
     outputs:
       run_id: ${{ github.run_id }}
+      comment_id: ${{ steps.post_comment.outputs.comment_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          name: reviewers-${{ github.run_id }}
 
       - name: Get changed files
         id: changed_files
@@ -103,6 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reviewers-${{ github.run_id }}
+          path: unique_reviewers.txt
 
       - name: Post/Update comment
         id: post_comment
@@ -138,14 +138,15 @@ jobs:
       contents: read
     if: |
       github.event_name == 'issue_comment' &&
-      contains(github.event.comment.body, 'LGTM')  # 不区分大小写
+      contains(github.event.comment.body, 'LGTM')
     steps:
       - name: Debug print context
         run: |
           echo "Event Name: ${{ github.event_name }}"
           echo "Comment Body: ${{ github.event.comment.body }}"
           echo "Run ID: ${{ needs.assign-reviewers.outputs.run_id }}"
-          
+          echo "Comment ID: ${{ needs.assign-reviewers.outputs.comment_id }}"
+
       - name: Download reviewers list
         uses: actions/download-artifact@v4
         with:
@@ -158,6 +159,9 @@ jobs:
         id: validate
         run: |
           commenter="${{ github.event.comment.user.login }}"
+          echo "当前审核人列表："
+          cat unique_reviewers.txt
+          echo "评论者用户名：@$commenter"
           
           if grep -qx "@$commenter" unique_reviewers.txt; then
             echo "VALID_REVIEWER=true" >> $GITHUB_ENV
@@ -172,9 +176,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
+          comment_id="${{ needs.assign-reviewers.outputs.comment_id }}"
+          
           comment_body=$(curl -s \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ needs.assign-reviewers.outputs.comment_id }}" | \
+            "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id" | \
             jq -r .body)
 
           updated_body=$(jq -n --arg body "$comment_body" --arg reviewer "$REVIEWER" --arg ts "$timestamp" '
@@ -195,6 +201,6 @@ jobs:
           curl -s -X PATCH \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -d "$(jq -n --arg body "$updated_body" '{body: $body}')" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ needs.assign-reviewers.outputs.comment_id }}"
+            "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
 
           echo "✔️ 审核状态已更新：$REVIEWER 于 $timestamp"
