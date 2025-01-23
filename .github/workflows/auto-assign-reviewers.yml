@@ -13,8 +13,6 @@ name: Auto Reviewers Assignment
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  schedule:
-    - cron: '0 * * * *'  # 每小时自动更新状态
 
 jobs:
   assign-reviewers:
@@ -22,9 +20,39 @@ jobs:
     permissions:
       issues: write
       pull-requests: write
-      reactions: write
     steps:
-      # ... [保留原有 checkout、获取文件、解析MAINTAINER等步骤] ...
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Get changed files
+        id: changed_files_step
+        run: |
+          changed_files=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
+            jq -r '.[].filename')
+          
+          echo "$changed_files" | grep -v '^MAINTAINER$' > changed_files.txt
+          echo "🔄 Changed files:"
+          cat changed_files.txt | sed 's/^/  - /'
+
+      - name: Parse MAINTAINER file
+        id: parse_maintainer_step
+        run: |
+          awk '
+            /^tag:/ { tag=$2 }
+            /^path:/ { path=$2 }
+            /^owners:/ {
+              split($0, parts, /[()]/)
+              github_ids = ""
+              for (i=2; i<=length(parts); i+=2) {
+                github_ids = github_ids "@" parts[i] " "
+              }
+              print tag "|" path "|" github_ids
+            }
+          ' MAINTAINER > tag_data.csv
+          echo "✅ Parsed data:"
+          column -t -s "|" tag_data.csv | sed 's/^/  /'
 
       - name: Generate review data
         id: generate_review_step
@@ -46,38 +74,63 @@ jobs:
       - name: Post/Update comment
         id: post_comment
         run: |
-          # 查找已有的Action评论
+          # 获取或创建评论（省略 reactions 权限）
+          comment_body=$(cat review_data.md)
           existing_comment=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body} | @base64')
-
-          # 合并新旧内容（保留状态）
-          new_comment_body=$(cat review_data.md)
+            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body}')
+          
           if [[ -n "$existing_comment" ]]; then
-            # 提取历史状态
-            old_body=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .body)
-            merged_body="${new_comment_body%%### 📝 Review Progress Tracking*}"
-            merged_body+=$(echo "$old_body" | awk '/### 📝 Review Progress Tracking/{flag=1} flag')
-            echo "$merged_body" > review_data.md
-            comment_id=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .id)
-            
+            comment_id=$(echo "$existing_comment" | jq -r '.id')
             # 更新现有评论
             response=$(curl -s -X PATCH \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$merged_body" '{body: $body}')" \
+              -d "$(jq -n --arg body "$comment_body" '{body: $body}')" \
               "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id")
           else
             # 创建新评论
             response=$(curl -s -X POST \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$new_comment_body" '{body: $body}')" \
+              -d "$(jq -n --arg body "$comment_body" '{body: $body}')" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
             comment_id=$(echo "$response" | jq -r .id)
           fi
-
-          # 设置评论ID输出
           echo "comment_id=$comment_id" >> $GITHUB_ENV
+
+      - name: Track review status
+        run: |
+          # 通过搜索评论内容获取审核状态（替代 reactions API）
+          status_report=$'\n### 审核状态（最终版）\n'
+          status_report+="维护者请通过以下方式标记审核完成：\n"
+          status_report+="1. 在 PR 评论区 @github-actions-bot\n"
+          status_report+="2. 发送指令：/review-done @yourname\n\n"
+          
+          # 获取所有相关评论
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+          
+          while read -r reviewer; do
+            if echo "$comments" | grep -q "/review-done ${reviewer}"; then
+              status_report+="✅ ${reviewer} 已审核\n"
+            else
+              status_report+="⌛ ${reviewer} 待审核\n"
+            fi
+          done < unique_reviewers.txt
+          
+          # 更新评论内容
+          current_body=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}" | jq -r .body)
+          
+          updated_body="${current_body%%### 审核状态*}"
+          updated_body+="$status_report"
+          
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -d "$(jq -n --arg body "$updated_body" '{body: $body}')" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ env.comment_id }}"
 
       - name: Setup reaction trackers
         run: |
