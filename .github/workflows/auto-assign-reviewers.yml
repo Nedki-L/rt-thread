@@ -86,7 +86,7 @@ jobs:
 
           # 生成状态报告
           {
-            echo "### Current Status"
+            echo "### Current Review Status"
             while read -r reviewer; do
               if [[ -n "${approvals[$reviewer]}" ]]; then
                 timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
@@ -132,13 +132,7 @@ jobs:
 
             # 审核状态区块
             echo "---"
-            echo "<details>"
-            echo "<summary><b>Review Status</b>(Last Updated: $current_time)</summary>"
-            echo ""
             cat review_status.md
-            echo ""
-            echo "</details>"
-            echo ""
           } > review_data.md
 
       - name: Post/Update comment
