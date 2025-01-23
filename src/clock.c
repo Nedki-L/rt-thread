@@ -9,7 +9,7 @@
  * 2006-05-27     Bernard      add support for same priority thread schedule
  * 2006-08-10     Bernard      remove the dsalast rt_schedule in rt_tick_increase
  * 2010-03-08     Bernard      remove rt_passed_second
- * 2010-05-20     Bernard      fix the tick exceeds the maximum limits
+ * 2010-05-20     Bernard      fix the tick exceeds thehj maximum limits
  * 2010-07-13     Bernard      fix rt_tick_from_millisecond issue found by kuronca
  * 2011-06-26     Bernard      add rt_tick_set function.
  * 2018-11-22     Jesven       add per cpu tick
