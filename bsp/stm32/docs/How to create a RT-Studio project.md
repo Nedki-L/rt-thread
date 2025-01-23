@@ -7,7 +7,7 @@ This article use STM32F401-Nucleo as an example.
 ## 1 Create a new project
 
 ### 1.1 Go to File -> Import.
-dasd
+
 ![](figures_en/Import_bsp.png)
 
 ### 1.2 Select RT-Thread Bsp Project into Workspace.
