@@ -73,11 +73,9 @@ jobs:
             # 交互提示区块
             echo "---"
             echo "### 📝 Review Instructions"
-            echo "1.Maintainers should check for code changes by re-running CI with `🔄 Refresh status now` below"
+            echo "1.Maintainers can check for code changes by clicking on '[🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})'"
             echo "2.Comment on 'LGTM' after the maintainer confirms the approval"
             echo "3.PR must be confirmed by at least one maintainer before merging"
-            echo ""
-            echo "[🔄 Refresh status now` below](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           } > review_data.md
 
       - name: Post/Update comment
