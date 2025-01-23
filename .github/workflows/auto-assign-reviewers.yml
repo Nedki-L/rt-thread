@@ -76,7 +76,7 @@ jobs:
             echo "2. 确认审核通过后评论 \`LGTM\`"
             echo "3. PR合并前需至少一位维护者确认"
             echo ""
-            echo "[🔄 重新运行检查](${{ github.server_url }}/${{ github.repository }}/actions?query=workflow%3A\"Code+Review+Assistant\")"
+            echo "[🔄 立即刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           } > review_data.md
 
       - name: Post/Update comment
