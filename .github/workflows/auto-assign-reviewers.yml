@@ -95,7 +95,7 @@ jobs:
             # 生成交互模块
             echo "### 📝 Review Progress"
             echo "维护者请执行以下操作："
-            echo "1. 评论 \`/review-done @你的用户名\` 标记审核完成"
+            echo "1. 评论 \`LGTM @你的用户名\` 标记审核完成"
             echo "2. 点击下方链接刷新状态"
             echo ""
             echo "<details>"
@@ -143,8 +143,8 @@ jobs:
         run: |
           comment_body="${{ github.event.comment.body }}"
           case "$comment_body" in
-            */review-done*)
-              reviewer=$(echo "$comment_body" | sed -nE 's/.*\/review-done +@([a-zA-Z0-9_-]+).*/\1/p')
+            *LGTM*)
+              reviewer=$(echo "$comment_body" | sed -nE 's/.*\LGTM +@([a-zA-Z0-9_-]+).*/\1/p')
               timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
               echo "Marking $reviewer as reviewed at $timestamp"
               echo "$timestamp" >> review_status.txt
