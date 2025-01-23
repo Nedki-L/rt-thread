@@ -121,7 +121,17 @@ jobs:
               fi
             done < tag_data.csv
 
+            # 恢复原有操作指引并优化格式
+            echo "---"
+            echo "### 📝 Review Instructions"
+            echo "1. Maintainers can check for code changes by clicking on [🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "2. Comment \`LGTM\` after confirming approval"
+            echo "3. PR must be confirmed by at least one maintainer before merging"
+            echo ""
+            echo "> ℹ️ 刷新操作需要仓库 **Write** 权限"
+
             # 审核状态区块
+            echo "---"
             echo "<details>"
             echo "<summary><b>审核状态</b>（最后更新: $current_time）</summary>"
             echo ""
@@ -129,14 +139,6 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
-
-            # 恢复原有操作指引并优化格式
-            echo "### 📝 Review Instructions"
-            echo "1. Maintainers can check for code changes by clicking on [🔄 Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
-            echo "2. Comment \`LGTM\` after confirming approval"
-            echo "3. PR must be confirmed by at least one maintainer before merging"
-            echo ""
-            echo "> ℹ️ 刷新操作需要仓库 **Write** 权限"
           } > review_data.md
 
       - name: Post/Update comment
