@@ -73,7 +73,7 @@ jobs:
             # 交互提示区块
             echo "---"
             echo "### 📝 Review Instructions"
-            echo "1.Maintainers can check for code changes by clicking on \`[🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\`"
+            echo "1.Maintainers can check for code changes by clicking on [🔄Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
             echo "2.Comment on \`LGTM\` after the maintainer confirms the approval"
             echo "3.PR must be confirmed by at least one maintainer before merging"
           } > review_data.md
