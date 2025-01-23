@@ -1,3 +1,14 @@
+#
+# Copyright (c) 2006-2025, RT-Thread Development Team
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Change Logs:
+# Date           Author       Notes
+# 2025-01-21     kurisaW      Initial version
+#
+# Script Function Description: Assign PR reviews based on the MAINTAINERS list.
+
 name: Auto Review Assistant
 
 on:
