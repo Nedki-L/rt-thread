@@ -1,19 +1,8 @@
-#
-# Copyright (c) 2006-2025, RT-Thread Development Team
-#
-# SPDX-License-Identifier: Apache-2.0
-#
-# Change Logs:
-# Date           Author       Notes
-# 2025-01-21     kurisaW      Initial version
-#
-# Script Function Description: Assign PR reviews based on the MAINTAINERS list.
-
 name: Auto Review Assistant
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
   issue_comment:
     types: [created]
@@ -24,7 +13,9 @@ jobs:
       group: assign-reviewers-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-22.04
-    if: github.repository_owner == 'Nedki-L'
+    if: |
+      github.repository_owner == 'Nedki-L' && 
+      (github.event.action != 'closed' || github.event.pull_request.merged == true)
     permissions:
       issues: write
       pull-requests: write
@@ -38,21 +29,22 @@ jobs:
         id: mention-cache
         with:
           path: mentioned_users.txt
-          key: pr-${{ github.event.pull_request.number }}-mentions
+          key: pr-${{ github.event.pull_request.number }}-mentions-v1
           restore-keys: |
-            pr-${{ github.event.pull_request.number }}-mentions
+            pr-${{ github.event.pull_request.number }}-mentions-v1
 
       - name: Get changed files
         id: changed_files
+        continue-on-error: true
         run: |
           page=1
-          echo "" > changed_files.txt
+          touch changed_files.txt
           while true; do
             response=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?page=$page&per_page=100")
             
-            files=$(echo "$response" | jq -r '.[].filename')
+            files=$(echo "$response" | jq -r '.[].filename' || echo "")
             if [ -z "$files" ]; then
               break
             fi
@@ -79,8 +71,9 @@ jobs:
 
       - name: Generate reviewers list
         id: generate_reviewers
+        continue-on-error: true
         run: |
-          rm -f triggered_reviewers.txt
+          touch triggered_reviewers.txt
           while IFS='|' read -r tag path reviewers; do
             if grep -qE "^$path(/|$)" changed_files.txt; then
               echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
@@ -93,7 +86,7 @@ jobs:
         run: |
           touch unique_reviewers.txt
           current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
-          reviewers=$(cat unique_reviewers.txt | tr '\n' '|' || true)
+          reviewers=$(tr '\n' '|' < unique_reviewers.txt || true)
 
           comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -137,36 +130,33 @@ jobs:
         run: |
           touch mentioned_users.txt
           
-          # 获取所有历史@记录（含分页）
           page=1
           while true; do
             response=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?page=$page&per_page=100")
             
-            # 双重标准化处理
             mentions=$(echo "$response" | 
               jq -r '.[] | 
                 select(.user.login == "github-actions[bot]") | 
                 .body' | 
               grep -oE '@[a-zA-Z0-9_-]+' |
-              awk '{print tolower($0)}')
+              awk '{print tolower($0)}' || echo "")
             
             [ -z "$mentions" ] && break
             echo "$mentions" >> mentioned_users.txt
             page=$((page+1))
           done
 
-          # 全局去重和排序
           awk '!seen[tolower($0)]++' mentioned_users.txt | sort -u > tmp && mv tmp mentioned_users.txt
 
       - name: Generate review data
         id: generate_review
+        continue-on-error: true
         run: |
           declare -A new_mentions=()
           touch mentioned_users.txt
           
-          # 加载全局记录
           awk '{print tolower($0)}' mentioned_users.txt | sort -u > global_mentions.txt
           
           {
@@ -181,7 +171,6 @@ jobs:
                 
                 processed=()
                 for reviewer in $reviewers; do
-                  # 统一标准化比较
                   normalized=$(echo "$reviewer" | awk '{print tolower($0)}')
                   
                   if grep -qFx "$normalized" global_mentions.txt || [[ -n "${new_mentions[$normalized]}" ]]; then
@@ -198,7 +187,7 @@ jobs:
                 echo "<details>"
                 echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
                 echo ""
-                grep -E "^$path(/|$)" changed_files.txt | sed 's/^/- /'
+                grep -E "^$path(/|$)" changed_files.txt | sed 's/^/- /' || echo "No files in this path"
                 echo ""
                 echo "</details>"
                 echo ""
@@ -228,11 +217,11 @@ jobs:
             echo "> ℹ️ **Refresh CI status operation requires repository Write permission.**"
           } > review_data.md
 
-          # 更新全局记录
           awk '!seen[tolower($0)]++' mentioned_users.txt | sort -u > tmp && mv tmp mentioned_users.txt
 
       - name: Post/Update comment
         id: post_comment
+        continue-on-error: true
         run: |
           current_body=$(cat review_data.md)
           existing_comments=$(curl -s \
@@ -257,8 +246,17 @@ jobs:
           fi
 
       - name: Update mention cache
-        uses: actions/cache/save@v3
+        uses: actions/cache@v3
         if: ${{ always() }}
         with:
           path: mentioned_users.txt
-          key: pr-${{ github.event.pull_request.number }}-mentions
+          key: pr-${{ github.event.pull_request.number }}-mentions-v1
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete PR cache
+        uses: actions/cache/delete@v1
+        with:
+          key: pr-${{ github.event.pull_request.number }}-mentions-v1
