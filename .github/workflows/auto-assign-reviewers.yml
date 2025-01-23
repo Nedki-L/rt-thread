@@ -15,9 +15,12 @@ jobs:
       contents: read
     outputs:
       comment_id: ${{ steps.post_comment.outputs.comment_id }}
+      run_id: ${{ github.run_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          name: reviewers-${{ github.run_id }}
 
       - name: Get changed files
         id: changed_files
@@ -142,7 +145,7 @@ jobs:
       - name: Download reviewers list
         uses: actions/download-artifact@v4
         with:
-          name: reviewers-${{ needs.assign-reviewers.outputs.comment_id }}
+          name: reviewers-${{ needs.assign-reviewers.outputs.run_id }}
           path: .
           pattern: unique_reviewers.txt
           merge-multiple: true
