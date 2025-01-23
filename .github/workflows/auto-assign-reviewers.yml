@@ -1,10 +1,9 @@
-name: Auto Reviewers Assignment
+name: Code Review Assistant
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  issue_comment:
-    types: [created]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   assign-reviewers:
@@ -13,9 +12,6 @@ jobs:
       issues: write
       pull-requests: write
       contents: read
-    outputs:
-      run_id: ${{ github.run_id }}
-      comment_id: ${{ steps.post_comment.outputs.comment_id }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -52,19 +48,13 @@ jobs:
         id: generate_review
         run: |
           changed_files=$(cat changed_files.txt)
-          rm -f review_data.md triggered_reviewers.txt
-
-          while IFS='|' read -r tag path reviewers; do
-            if grep -qE "^$path(/|$)" changed_files.txt; then
-              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
-            fi
-          done < tag_data.csv
-
-          awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
+          rm -f review_data.md
 
           {
-            echo "## 📌 Code Ownership Review Request"
+            echo "## 📌 Code Review Assignment"
             echo ""
+            
+            # 代码所有权区块
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
@@ -80,29 +70,14 @@ jobs:
               fi
             done < tag_data.csv
             
-            echo "### 📝 Review Progress"
-            echo "维护者请执行以下操作："
-            echo "1. 评论 \`LGTM\` 标记审核完成"
-            echo "2. 点击下方链接刷新状态"
+            # 交互提示区块
+            echo "### 📝 Review Instructions"
+            echo "1. 维护者请检查代码变更"
+            echo "2. 确认审核通过后评论 \`LGTM\`"
+            echo "3. PR合并前需至少一位维护者确认"
             echo ""
-            echo "<details>"
-            echo "<summary><b>当前审核状态</b>（最后更新：未刷新）</summary>"
-            echo ""
-            echo "### 实时状态"
-            cat unique_reviewers.txt | while read -r reviewer; do
-              echo "- **${reviewer}**: ⌛ 等待审核"
-            done
-            echo ""
-            echo "</details>"
-            echo ""
-            echo "[🔄 立即刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "[🔄 重新运行检查](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
           } > review_data.md
-
-      - name: Upload reviewers list
-        uses: actions/upload-artifact@v4
-        with:
-          name: reviewers-${{ github.run_id }}
-          path: unique_reviewers.txt
 
       - name: Post/Update comment
         id: post_comment
@@ -125,82 +100,4 @@ jobs:
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
-            comment_id=$(echo "$response" | jq -r .id)
           fi
-          echo "comment_id=$comment_id" >> $GITHUB_OUTPUT
-
-  process-approval:
-    runs-on: ubuntu-latest
-    needs: assign-reviewers
-    permissions:
-      issues: write
-      pull-requests: write
-      contents: read
-    if: |
-      github.event_name == 'issue_comment' &&
-      contains(github.event.comment.body, 'LGTM')
-    steps:
-      - name: Debug print context
-        run: |
-          echo "Event Name: ${{ github.event_name }}"
-          echo "Comment Body: ${{ github.event.comment.body }}"
-          echo "Run ID: ${{ needs.assign-reviewers.outputs.run_id }}"
-          echo "Comment ID: ${{ needs.assign-reviewers.outputs.comment_id }}"
-
-      - name: Download reviewers list
-        uses: actions/download-artifact@v4
-        with:
-          name: reviewers-${{ needs.assign-reviewers.outputs.run_id }}
-          path: .
-          pattern: unique_reviewers.txt
-          merge-multiple: true
-
-      - name: Validate maintainer
-        id: validate
-        run: |
-          commenter="${{ github.event.comment.user.login }}"
-          echo "当前审核人列表："
-          cat unique_reviewers.txt
-          echo "评论者用户名：@$commenter"
-          
-          if grep -qx "@$commenter" unique_reviewers.txt; then
-            echo "VALID_REVIEWER=true" >> $GITHUB_ENV
-            echo "REVIEWER=@$commenter" >> $GITHUB_ENV
-          else
-            echo "::notice::[安全拦截] 用户 @$commenter 无审核权限"
-            exit 0
-          fi
-
-      - name: Update review status
-        if: env.VALID_REVIEWER == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          timestamp=$(date -u +"%Y-%m-%d %H:%M UTC")
-          comment_id="${{ needs.assign-reviewers.outputs.comment_id }}"
-          
-          comment_body=$(curl -s \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id" | \
-            jq -r .body)
-
-          updated_body=$(jq -n --arg body "$comment_body" --arg reviewer "$REVIEWER" --arg ts "$timestamp" '
-            ($body | split("<details>")) as $parts |
-            $parts[0] | 
-            gsub("最后更新：.*"; "最后更新：\($ts)") |
-            . + "<details>" + ($parts[1] | 
-              split("### 实时状态") |
-              .[0] + 
-              "### 实时状态\n\n" + 
-              (.[1] | 
-                gsub("- ⌛ \\*\\*\($reviewer)\\*\\* 等待审核"; "- ✅ **\($reviewer)** 审核于 \($ts)") |
-                gsub("- ✅ \\*\\*\($reviewer)\\*\\* 审核于 .*"; "- ✅ **\($reviewer)** 审核于 \($ts)")
-              )
-            )
-          ')
-
-          curl -s -X PATCH \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -d "$(jq -n --arg body "$updated_body" '{body: $body}')" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
-
-          echo "✔️ 审核状态已更新：$REVIEWER 于 $timestamp"
