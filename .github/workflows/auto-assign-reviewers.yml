@@ -1,13 +1,19 @@
-name: Code Review Assistant
+name: Auto Review Assistant
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
 
 jobs:
   assign-reviewers:
-    runs-on: ubuntu-latest
+    concurrency:
+      group: assign-reviewers-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-22.04
+    if: github.repository_owner == 'Nedki-L'
     permissions:
       issues: write
       pull-requests: write
@@ -19,19 +25,26 @@ jobs:
       - name: Get changed files
         id: changed_files
         run: |
-          changed_files=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
-            jq -r '.[].filename')
-          
-          echo "$changed_files" | grep -v '^MAINTAINER$' > changed_files.txt
-          echo "🔄 Changed files:"
-          cat changed_files.txt | sed 's/^/  - /'
+          page=1
+          echo "" > changed_files.txt
+          while true; do
+            response=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?page=$page&per_page=100")
+            
+            files=$(echo "$response" | jq -r '.[].filename')
+            if [ -z "$files" ]; then
+              break
+            fi
+            echo "$files" | grep -v '^MAINTAINERS$' >> changed_files.txt
+            page=$((page+1))
+          done
 
-      - name: Parse MAINTAINER file
+      - name: Parse MAINTAINERS file
         id: parse_maintainer
         run: |
           awk '
+            BEGIN { FS="[ \t]*:[ \t]*" }
             /^tag:/ { tag=$2 }
             /^path:/ { path=$2 }
             /^owners:/ {
@@ -42,24 +55,117 @@ jobs:
               }
               print tag "|" path "|" github_ids
             }
-          ' MAINTAINER > tag_data.csv
+          ' MAINTAINERS > tag_data.csv
+
+      - name: Generate reviewers list
+        id: generate_reviewers
+        run: |
+          rm -f triggered_reviewers.txt
+          while IFS='|' read -r tag path reviewers; do
+            if grep -qE "^$path(/|$)" changed_files.txt; then
+              echo "$reviewers" | tr ' ' '\n' >> triggered_reviewers.txt
+            fi
+          done < tag_data.csv
+          awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
+
+      - name: Get approval status
+        id: get_approval
+        run: |
+          current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
+          reviewers=$(cat unique_reviewers.txt | tr '\n' '|')
+
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # 生成审批数据
+          echo '#!/bin/bash' > approval_data.sh
+          echo 'declare -A approvals=()' >> approval_data.sh
+          
+          jq -r --arg reviewers "$reviewers" '
+            .[] | 
+            select(.user.login != "github-actions[bot]") |
+            select(.body | test("^\\s*LGTM\\s*$"; "i")) |
+            .user.login as $user |
+            "@\($user)" as $mention |
+            select($mention | inside($reviewers)) |
+            "approvals[\"\($mention)\"]=\"\(.created_at)\"" 
+          ' <<< "$comments" >> approval_data.sh
+
+          chmod +x approval_data.sh
+          source ./approval_data.sh
+
+          # 生成状态报告
+          {
+            echo "---"
+            echo "### 📊 Current Review Status (Last Updated: $current_time)"
+            while read -r reviewer; do
+              if [[ -n "${approvals[$reviewer]}" ]]; then
+                timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
+                echo "- ✅ **${reviewer#@}** Reviewed On $timestamp"
+              else
+                echo "- ⌛ **${reviewer#@}** Pending Review"
+              fi
+            done < unique_reviewers.txt
+          } > review_status.md
+
+      - name: Build mention registry
+        id: mention_registry
+        run: |
+          # 获取PR所有历史评论中的@记录
+          page=1
+          echo "" > all_mentions.txt
+          while true; do
+            response=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments?page=$page&per_page=100")
+            
+            mentions=$(echo "$response" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .body' | \
+              grep -oE '@[a-zA-Z0-9_-]+' | tr '[:upper:]' '[:lower:]')
+            
+            if [ -z "$mentions" ]; then
+              break
+            fi
+            echo "$mentions" >> all_mentions.txt
+            page=$((page+1))
+          done
+          
+          # 生成标准化唯一记录
+          awk '!seen[tolower($0)]++' all_mentions.txt > mentioned_users.txt
+          echo "Existing mentions:"
+          cat mentioned_users.txt
 
       - name: Generate review data
         id: generate_review
         run: |
-          changed_files=$(cat changed_files.txt)
-          rm -f review_data.md
-
+          declare -A new_mentions=()
+          
           {
             echo "## 📌 Code Review Assignment"
             echo ""
             
-            # 代码所有权区块
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
                 echo "### 🏷️ Tag: $tag"
                 echo "**Path:** \`$path\`  "
-                echo "**Reviewers:** $reviewers  "
+                echo -n "**Reviewers:** "
+                
+                # 处理每个审核者
+                processed=()
+                for reviewer in $reviewers; do
+                  normalized=$(echo "$reviewer" | tr '[:upper:]' '[:lower:]')
+                  if grep -qi "^$normalized$" mentioned_users.txt || [[ -n "${new_mentions[$normalized]}" ]]; then
+                    processed+=("${reviewer#@}")
+                  else
+                    processed+=("$reviewer")
+                    new_mentions[$normalized]=1
+                  fi
+                done
+                
+                # 格式化输出
+                echo "$(IFS=', '; echo "${processed[*]}")  "
+                
+                # 显示变更文件
                 echo "<details>"
                 echo "<summary><b>Changed Files</b> (Click to expand)</summary>"
                 echo ""
@@ -69,35 +175,53 @@ jobs:
                 echo ""
               fi
             done < tag_data.csv
+
+            cat review_status.md
             
-            # 交互提示区块
+            echo "---"
             echo "### 📝 Review Instructions"
-            echo "1. 维护者请检查代码变更"
-            echo "2. 确认审核通过后评论 \`LGTM\`"
-            echo "3. PR合并前需至少一位维护者确认"
             echo ""
-            echo "[🔄 重新运行检查](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo "1. **维护者可以通过单击此处来刷新审查状态:** [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo "   **Maintainers can refresh the review status by clicking here:** [🔄 Refresh Status](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo ""
+            echo "2. **确认审核通过后评论 \`LGTM/lgtm\`**"
+            echo "   **Comment \`LGTM/lgtm\` after confirming approval**"
+            echo ""
+            echo "3. **PR合并前需至少一位维护者确认**"
+            echo "   **PR must be confirmed by at least one maintainer before merging**"
+            echo ""
+            echo "> ℹ️ **刷新CI状态操作需要具备仓库写入权限。**"
+            echo "> ℹ️ **Refresh CI status operation requires repository Write permission.**"
           } > review_data.md
+          
+          # 更新mention记录
+          for mention in "${!new_mentions[@]}"; do
+            echo "$mention" >> mentioned_users.txt
+          done
+          awk '!seen[$0]++' mentioned_users.txt > tmp && mv tmp mentioned_users.txt
 
       - name: Post/Update comment
         id: post_comment
         run: |
-          existing_comment=$(curl -s \
+          # 对比并更新评论
+          current_body=$(cat review_data.md)
+          existing_comments=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" | \
-            jq -r '.[] | select(.user.login == "github-actions[bot]") | {id: .id, body: .body} | @base64')
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
           
-          if [[ -n "$existing_comment" ]]; then
-            comment_id=$(echo "$existing_comment" | head -1 | base64 -d | jq -r .id)
-            echo "Updating existing comment $comment_id"
-            response=$(curl -s -X PATCH \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id")
+          comment_id=$(echo "$existing_comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .id' | head -1)
+          
+          if [ -n "$comment_id" ]; then
+            existing_body=$(echo "$existing_comments" | jq -r ".[] | select(.id == $comment_id) | .body")
+            if [ "$existing_body" != "$current_body" ]; then
+              curl -s -X PATCH \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -d "$(jq -n --arg body "$current_body" '{body: $body}')" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/comments/$comment_id"
+            fi
           else
-            echo "Creating new comment"
-            response=$(curl -s -X POST \
+            curl -s -X POST \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -d "$(jq -n --arg body "$(cat review_data.md)" '{body: $body}')" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+              -d "$(jq -n --arg body "$current_body" '{body: $body}')" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
           fi
