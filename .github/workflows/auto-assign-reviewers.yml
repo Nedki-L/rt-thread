@@ -68,6 +68,47 @@ jobs:
           done < tag_data.csv
           awk 'NF && !seen[$0]++' triggered_reviewers.txt > unique_reviewers.txt
 
+      - name: Get approval status
+        id: get_approval
+        run: |
+          current_time=$(date -u +"%Y-%m-%d %H:%M UTC")
+          reviewers=$(cat unique_reviewers.txt | tr '\n' '|')
+
+          comments=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments")
+
+          # 生成审批数据
+          echo '#!/bin/bash' > approval_data.sh
+          echo 'declare -A approvals=()' >> approval_data.sh
+          
+          jq -r --arg reviewers "$reviewers" '
+            .[] | 
+            select(.user.login != "github-actions[bot]") |
+            select(.body | test("^\\s*LGTM\\s*$"; "i")) |
+            .user.login as $user |
+            "@\($user)" as $mention |
+            select($mention | inside($reviewers)) |
+            "approvals[\"\($mention)\"]=\"\(.created_at)\"" 
+          ' <<< "$comments" >> approval_data.sh
+
+          chmod +x approval_data.sh
+          source ./approval_data.sh
+
+          # 生成状态报告
+          {
+            echo "---"
+            echo "### 📊 Current Review Status (Last Updated: $current_time)"
+            while read -r reviewer; do
+              if [[ -n "${approvals[$reviewer]}" ]]; then
+                timestamp=$(date -d "${approvals[$reviewer]}" -u +"%Y-%m-%d %H:%M UTC")
+                echo "- ✅ **${reviewer#@}** Reviewed On $timestamp"
+              else
+                echo "- ⌛ **${reviewer#@}** Pending Review"
+              fi
+            done < unique_reviewers.txt
+          } > review_status.md
+
       - name: Build mention registry
         id: mention_registry
         run: |
