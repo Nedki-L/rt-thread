@@ -181,9 +181,17 @@ jobs:
             echo "---"
             echo "### 📝 Review Instructions"
             echo ""
-            echo "1. [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
-            echo "2. Comment \`LGTM\` after approval"
-            echo "3. Requires at least one maintainer approval"
+            echo "1. **维护者可以通过单击此处来刷新审查状态:** [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun"
+            echo "   **Maintainers can refresh the review status by clicking here:** [🔄 Refresh Status](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun"
+            echo ""
+            echo "2. **确认审核通过后评论 \`LGTM/lgtm\`**"
+            echo "   **Comment \`LGTM/lgtm\` after confirming approval**"
+            echo ""
+            echo "3. **PR合并前需至少一位维护者确认**"
+            echo "   **PR must be confirmed by at least one maintainer before merging**"
+            echo ""
+            echo "> ℹ️ **刷新CI状态操作需要具备仓库写入权限。**"
+            echo "> ℹ️ **Refresh CI status operation requires repository Write permission.**"
           } > review_data.md
           
           # 更新mention记录
