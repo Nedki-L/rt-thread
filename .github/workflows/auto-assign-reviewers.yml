@@ -104,7 +104,7 @@ jobs:
           {
             echo "## 📌 Code Review Assignment"
             echo ""
-            
+
             # 代码所有权区块
             while IFS='|' read -r tag path reviewers; do
               if grep -qE "^$path(/|$)" changed_files.txt; then
@@ -120,7 +120,7 @@ jobs:
                 echo ""
               fi
             done < tag_data.csv
-            
+
             # 审核状态区块
             echo "<details>"
             echo "<summary><b>审核状态</b>（最后更新: $current_time）</summary>"
@@ -128,11 +128,15 @@ jobs:
             cat review_status.md
             echo ""
             echo "</details>"
+            echo ""
 
-            # 操作指引
+            # 恢复原有操作指引并优化格式
             echo "### 📝 Review Instructions"
-            echo "1. 维护者评论 \`LGTM\` 确认审核通过"
-            echo "2. [🔄 刷新状态](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo "1. Maintainers can check for code changes by clicking on [🔄 Refresh status now](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun)"
+            echo "2. Comment \`LGTM\` after confirming approval"
+            echo "3. PR must be confirmed by at least one maintainer before merging"
+            echo ""
+            echo "> ℹ️ 刷新操作需要仓库 **Write** 权限"
           } > review_data.md
 
       - name: Post/Update comment
