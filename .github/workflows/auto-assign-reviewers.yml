@@ -56,15 +56,21 @@ jobs:
         id: parse_maintainer
         run: |
           awk '
-            BEGIN { FS="[ \t]*:[ \t]*" }
             /^tag:/ { tag=$2 }
             /^path:/ { path=$2 }
             /^owners:/ {
+              # Replace spaces with a placeholder
+              gsub(/ /, "_SPACE_")
+              # Replace colons with a placeholder
+              gsub(/:/, "_COLON_")
               split($0, parts, /[()]/)
               github_ids = ""
               for (i=2; i<=length(parts); i+=2) {
                 github_ids = github_ids "@" parts[i] " "
               }
+              # Replace placeholders back to the original characters
+              gsub(/_SPACE_/, " ")
+              gsub(/_COLON_/, ":")
               print tag "|" path "|" github_ids
             }
           ' MAINTAINERS > tag_data.csv
