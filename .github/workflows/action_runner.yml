@@ -1,12 +1,9 @@
+# Automation utest run script for the QEMU platform
+# Generate the corresponding config configuration for CI based on the configuration file under .github/utest.
 
 name: action_auto_utest
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the master branch
 on:
-  # Runs at 16:00 UTC (BeiJing 00:00) on the 1st of every month
-  schedule:
-    - cron:  '0 16 1 * *'
   push:
     branches:
       - master
@@ -23,137 +20,219 @@ on:
       - '**/README_zh.md'
 
 permissions:
-  contents: read # to fetch code (actions/checkout)
+  contents: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      config_files: ${{ steps.set-configs.outputs.config_files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+
+      - name: Get changed files via GitHub API
+        id: changed-files
+        run: |
+          # 通过 GitHub API 获取 PR 的变更文件列表
+          changed_files=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
+            jq -r '.[].filename')
+
+          # 将变更的文件输出为环境变量
+          echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+
+      - name: Determine relevant configs
+        id: set-configs
+        env:
+          CHANGED_FILES: ${{ env.CHANGED_FILES }}
+        run: |
+          python3 -c "import json, os, fnmatch
+          with open('.github/utest/config_paths.json') as f:
+              config_mappings = json.load(f)
+          changed_files = os.environ['CHANGED_FILES'].split()
+          relevant_configs = set()
+          for config_file, patterns in config_mappings.items():
+              for pattern in patterns:
+                  matched = False
+                  for file in changed_files:
+                      if fnmatch.fnmatch(file, pattern):
+                          relevant_configs.add(config_file)
+                          matched = True
+                          break
+                  if matched:
+                      break
+          print(json.dumps(list(relevant_configs)))" > relevant_configs.json
+          
+          echo "view relevant_configs.json:"
+          cat relevant_configs.json
+          echo "end view"
+          echo "config_files=$(cat relevant_configs.json)" >> $GITHUB_OUTPUT
+
   test:
     runs-on: ubuntu-22.04
-    name: ${{ matrix.legs.UTEST }}
-    if: github.repository_owner == 'Nedki-L'
+    name: ${{ matrix.platform.UTEST }}-${{ matrix.platform.KERNEL }} - ${{ matrix.config_file }}
     strategy:
       fail-fast: false
       matrix:
-       legs:
-         - {UTEST: "qemu-vexpress-a9", RTT_BSP: "bsp/qemu-vexpress-a9",    QEMU_ARCH: "arm",      QEMU_MACHINE: "vexpress-a9", CONFIG_FILE: "config/default.cfg", SD_FILE: "sd.bin", RUN: "yes"}
-         - {UTEST: "qemu-virt64-aarch64", RTT_BSP: "bsp/qemu-virt64-aarch64", QEMU_ARCH: "aarch64",  QEMU_MACHINE: "virt",  CONFIG_FILE: "config/default.cfg",   SD_FILE: "sd.bin", RUN: "no"}
-         - {UTEST: "qemu-virt64-riscv", RTT_BSP: "bsp/qemu-virt64-riscv",   QEMU_ARCH: "riscv64",  QEMU_MACHINE: "virt",  CONFIG_FILE: "config/default.cfg",   SD_FILE: "None", RUN: "yes"}
+        platform:
+          - { UTEST: "qemu-a9",    RTT_BSP: "bsp/qemu-vexpress-a9",    QEMU_ARCH: "arm",     QEMU_MACHINE: "vexpress-a9", SD_FILE: "sd.bin", RUN: "yes", KERNEL: "standard" }
+          - { UTEST: "qemu-riscv",   RTT_BSP: "bsp/qemu-virt64-riscv",   QEMU_ARCH: "riscv64", QEMU_MACHINE: "virt",        SD_FILE: "None",   RUN: "yes", KERNEL: "standard" }
+          - { UTEST: "qemu-aarch64", RTT_BSP: "bsp/qemu-virt64-aarch64", QEMU_ARCH: "aarch64", QEMU_MACHINE: "virt",        SD_FILE: "sd.bin", RUN: "yes", KERNEL: "rtsmart" }
+        config_file: ${{ fromJson(needs.prepare.outputs.config_files) }}
+
     env:
-      TEST_QEMU_ARCH: ${{ matrix.legs.QEMU_ARCH }}
-      TEST_QEMU_MACHINE: ${{ matrix.legs.QEMU_MACHINE }}
-      TEST_BSP_ROOT: ${{ matrix.legs.RTT_BSP }}
-      TEST_CONFIG_FILE: ${{ matrix.legs.CONFIG_FILE }}
-      TEST_SD_FILE: ${{ matrix.legs.SD_FILE }}
+      TEST_QEMU_ARCH: ${{ matrix.platform.QEMU_ARCH }}
+      TEST_QEMU_MACHINE: ${{ matrix.platform.QEMU_MACHINE }}
+      TEST_BSP_ROOT: ${{ matrix.platform.RTT_BSP }}
+      TEST_CONFIG_FILE: ${{ matrix.config_file }}
+      TEST_SD_FILE: ${{ matrix.platform.SD_FILE }}
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Tools
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get -yqq install scons qemu-system git
-        pip3 install kconfiglib
+      - name: Install Tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get -yqq install scons qemu-system git
+          pip3 install kconfiglib
 
-    - name: Install Arm ToolChains
-      if: ${{ matrix.legs.QEMU_ARCH == 'arm' && matrix.legs.UTEST != 'rtsmart/arm' && success() }}
-      shell: bash
-      run: |
-        wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.3/gcc-arm-none-eabi-10-2020-q4-major-x86_64-linux.tar.bz2
-        sudo tar xjf gcc-arm-none-eabi-10-2020-q4-major-x86_64-linux.tar.bz2 -C /opt
-        /opt/gcc-arm-none-eabi-10-2020-q4-major/bin/arm-none-eabi-gcc --version
-        echo "RTT_EXEC_PATH=/opt/gcc-arm-none-eabi-10-2020-q4-major/bin" >> $GITHUB_ENV
+      - name: Install ToolChains
+        shell: bash
+        run: |
+          TOOLCHAIN_INSTALLED=""
 
-    - name: Install Arm Musl ToolChains
-      if: ${{ matrix.legs.QEMU_ARCH == 'arm' && matrix.legs.UTEST == 'rtsmart/arm' && success() }}
-      shell: bash
-      run: |
-        wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/arm-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2
-        sudo tar xjf arm-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2 -C /opt
-        /opt/arm-linux-musleabi_for_x86_64-pc-linux-gnu/bin/arm-linux-musleabi-gcc --version
-        echo "RTT_EXEC_PATH=/opt/arm-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
-        echo "RTT_CC_PREFIX=arm-linux-musleabi-" >> $GITHUB_ENV
+          # Install Arm ToolChains
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "arm" && "${{ matrix.config_file }}" != "rtsmart/rtsmart.cfg" ]]; then
+            echo "Starting install Arm ToolChains"
+            wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.3/gcc-arm-none-eabi-10-2020-q4-major-x86_64-linux.tar.bz2
+            sudo tar xjf gcc-arm-none-eabi-10-2020-q4-major-x86_64-linux.tar.bz2 -C /opt
+            /opt/gcc-arm-none-eabi-10-2020-q4-major/bin/arm-none-eabi-gcc --version
+            echo "RTT_EXEC_PATH=/opt/gcc-arm-none-eabi-10-2020-q4-major/bin" >> $GITHUB_ENV
+            echo "RTT_CC_PREFIX=arm-none-eabi-" >> $GITHUB_ENV
+            echo "TOOLCHAIN_INSTALLED=arm" >> $GITHUB_ENV
+          fi
 
-    - name: Install RISC-V ToolChains
-      if: ${{ matrix.legs.QEMU_ARCH == 'riscv64' && matrix.legs.UTEST != 'rtsmart/riscv64' && success() }}
-      run: |
-        wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.4/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14.tar.gz
-        sudo tar zxvf riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14.tar.gz -C /opt
-        /opt/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14/bin/riscv64-unknown-elf-gcc --version
-        echo "RTT_EXEC_PATH=/opt/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14/bin" >> $GITHUB_ENV
+          # Install Arm Musl ToolChains
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "arm" && "${{ matrix.config_file }}" == "rtsmart/rtsmart.cfg" ]]; then
+            echo "Starting install Arm Musl ToolChains"
+            wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/arm-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2
+            sudo tar xjf arm-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2 -C /opt
+            /opt/arm-linux-musleabi_for_x86_64-pc-linux-gnu/bin/arm-linux-musleabi-gcc --version
+            echo "RTT_EXEC_PATH=/opt/arm-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
+            echo "RTT_CC_PREFIX=arm-linux-musleabi-" >> $GITHUB_ENV
+            echo "TOOLCHAIN_INSTALLED=arm-musl" >> $GITHUB_ENV
+          fi
 
-    - name: Install RISC-V Musl ToolChains
-      if: ${{ matrix.legs.QEMU_ARCH == 'riscv64' && matrix.legs.UTEST == 'rtsmart/riscv64' && success() }}
-      shell: bash
-      run: |
-        wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu_latest.tar.bz2
-        sudo tar xjf riscv64-linux-musleabi_for_x86_64-pc-linux-gnu_latest.tar.bz2 -C /opt
-        /opt/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin/riscv64-unknown-linux-musl-gcc --version
-        echo "RTT_EXEC_PATH=/opt/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
-        echo "RTT_CC_PREFIX=riscv64-unknown-linux-musl-" >> $GITHUB_ENV
+          # Install RISC-V ToolChains
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "riscv64" && "${{ matrix.config_file }}" != "rtsmart/rtsmart.cfg" ]]; then
+            echo "Starting install RISC-V ToolChains"
+            wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.4/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14.tar.gz
+            sudo tar zxvf riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14.tar.gz -C /opt
+            /opt/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14/bin/riscv64-unknown-elf-gcc --version
+            echo "RTT_EXEC_PATH=/opt/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14/bin" >> $GITHUB_ENV
+            echo "TOOLCHAIN_INSTALLED=riscv" >> $GITHUB_ENV
+          fi
 
-    - name: Install AARCH64 Musl ToolChains
-      if: ${{ matrix.legs.QEMU_ARCH == 'aarch64' && matrix.legs.UTEST == 'rtsmart/aarch64' && success() }}
-      shell: bash
-      run: |
-        wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2
-        sudo tar xjf aarch64-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2 -C /opt
-        /opt/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu/bin/aarch64-linux-musleabi-gcc --version
-        echo "RTT_EXEC_PATH=/opt/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
-        echo "RTT_CC_PREFIX=aarch64-linux-musleabi-" >> $GITHUB_ENV
+          # Install RISC-V Musl ToolChains
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "riscv64" && "${{ matrix.config_file }}" == "rtsmart/rtsmart.cfg" ]]; then
+            echo "Starting install RISC-V Musl ToolChains"
+            wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu_latest.tar.bz2
+            sudo tar xjf riscv64-linux-musleabi_for_x86_64-pc-linux-gnu_latest.tar.bz2 -C /opt
+            /opt/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin/riscv64-unknown-linux-musl-gcc --version
+            echo "RTT_EXEC_PATH=/opt/riscv64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
+            echo "RTT_CC_PREFIX=riscv64-unknown-linux-musl-" >> $GITHUB_ENV
+            echo "TOOLCHAIN_INSTALLED=riscv-musl" >> $GITHUB_ENV
+          fi
 
-    - name: CPP11 Preprocessing Toolchain
-      if: ${{ matrix.legs.QEMU_ARCH == 'arm' && matrix.legs.UTEST == 'components/cpp11' && success() }}
-      shell: bash
-      run: |
-        # Delete the following files
-        sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/thread
-        sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/mutex
-        sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/condition_variable
-        sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/future
-        sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/pthread.h
-        # Clear the contents of the following files
-        sudo cat /dev/null > /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/sys/_pthreadtypes.h
-        # Clear -fno-exceptions in rtconfig.py
-        sed -i 's/-fno-exceptions/ /g' $TEST_BSP_ROOT/rtconfig.py
+          # Install AARCH64 Musl ToolChains
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "aarch64" && "${{ matrix.config_file }}" == "rtsmart/rtsmart.cfg" ]]; then
+            echo "Starting install AARCH64 Musl ToolChains"
+            wget -q https://github.com/RT-Thread/toolchains-ci/releases/download/v1.7/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2
+            sudo tar xjf aarch64-linux-musleabi_for_x86_64-pc-linux-gnu_stable.tar.bz2 -C /opt
+            /opt/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu/bin/aarch64-linux-musleabi-gcc --version
+            echo "RTT_EXEC_PATH=/opt/aarch64-linux-musleabi_for_x86_64-pc-linux-gnu/bin" >> $GITHUB_ENV
+            echo "RTT_CC_PREFIX=aarch64-linux-musleabi-" >> $GITHUB_ENV
+            echo "TOOLCHAIN_INSTALLED=aarch64-musl" >> $GITHUB_ENV
+          fi
 
-    - name: Build BSP
-      run: |
-        echo CONFIG_RT_USING_UTESTCASES=y >> $TEST_BSP_ROOT/.config
-        cat .github/utest/$TEST_CONFIG_FILE >> $TEST_BSP_ROOT/.config
-        scons --pyconfig-silent -C $TEST_BSP_ROOT
-        scons -j$(nproc) --strict -C $TEST_BSP_ROOT
+          # Install CPP11 Preprocessing Toolchain
+          if [[ "${{ matrix.platform.QEMU_ARCH }}" == "arm" && "${{ matrix.config_file }}" == "cpp11/cpp11.cfg" ]]; then
+            sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/thread
+            sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/mutex
+            sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/condition_variable
+            sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/c++/10.2.1/future
+            sudo rm -f /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/pthread.h
+            sudo cat /dev/null > /opt/gcc-arm-none-eabi-10-2020-q4-major/arm-none-eabi/include/sys/_pthreadtypes.h
+            sed -i 's/-fno-exceptions/ /g' $TEST_BSP_ROOT/rtconfig.py
+          fi
 
-    - name: Start run Test
-      if: ${{matrix.legs.RUN == 'yes' && success() }}
-      run: |
-        if [ $TEST_SD_FILE != "None" ]; then
-          dd if=/dev/zero of=$TEST_BSP_ROOT/sd.bin bs=1024 count=65536
-          qemu-system-$TEST_QEMU_ARCH -nographic -M $TEST_QEMU_MACHINE -kernel $TEST_BSP_ROOT/rtthread.bin -nographic -sd $TEST_BSP_ROOT/sd.bin > qemu_output_${TEST_QEMU_ARCH}.log 2>&1 &
-        else
-          qemu-system-$TEST_QEMU_ARCH -nographic -M $TEST_QEMU_MACHINE -kernel $TEST_BSP_ROOT/rtthread.bin -nographic > qemu_output_${TEST_QEMU_ARCH}.log 2>&1 &
-        fi
+          if [ "$TOOLCHAIN_INSTALLED" == "None" ]; then
+            echo "No valid toolchain installed, stopping the workflow."
+          fi
 
-        cat qemu_output_${TEST_QEMU_ARCH}.log
+      - name: Build BSP
+        if: ${{ matrix.platform.RUN == 'yes' && env.TOOLCHAIN_INSTALLED != '' && success() }}
+        run: |
+          echo CONFIG_RT_USING_UTESTCASES=y >> $TEST_BSP_ROOT/.config
+          cat .github/utest/$TEST_CONFIG_FILE >> $TEST_BSP_ROOT/.config
+          scons --pyconfig-silent -C $TEST_BSP_ROOT
+          scons -j$(nproc) --strict -C $TEST_BSP_ROOT
 
-    # - name: Monitor qemu log
-    #   if: ${{matrix.legs.RUN == 'yes' && success() }}
-    #   run: |
-    #     FAILURE_DETECTED=false
-    #     ERROR_LOGS=""
-        
-    #     tail -n 0 -f qemu_output_${TEST_QEMU_ARCH}.log | while read line; do
-    #       echo $line
-    #       if [[ "$line" == *"[  FAILED  ] [ result   ]"* ]]; then
-    #         ERROR_LOGS="$ERROR_LOGS$line"$'\n'
-    #         FAILURE_DETECTED=true
-    #       fi
+      - name: QEMU Run Test
+        if: ${{ matrix.platform.RUN == 'yes' && env.TOOLCHAIN_INSTALLED != '' && success() }}
+        run: |
+          if [ "$TEST_SD_FILE" != "None" ]; then
+            dd if=/dev/zero of=$TEST_BSP_ROOT/sd.bin bs=1024 count=65536
+            mkfs.fat $TEST_BSP_ROOT/sd.bin
+          fi
+
+          if [[ "${{ matrix.platform.QEMU_ARCH }}"  == "aarch64" ]]; then 
+            qemu-system-$TEST_QEMU_ARCH -M virt,gic-version=2 -cpu cortex-a53 -smp 4 -kernel $TEST_BSP_ROOT/rtthread.bin  -nographic \
+            -drive if=none,file=$TEST_BSP_ROOT/sd.bin,format=raw,id=blk0 -device virtio-blk-device,drive=blk0,bus=virtio-mmio-bus.0 \
+            -netdev user,id=net0 -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.1 \
+            > qemu_output_$TEST_QEMU_ARCH.log  2>&1 &
+          elif [[ "${{ matrix.platform.QEMU_ARCH }}"  == "arm" ]]; then 
+            qemu-system-$TEST_QEMU_ARCH \
+                -nographic \
+                -M $TEST_QEMU_MACHINE \
+                -kernel $TEST_BSP_ROOT/rtthread.bin  \
+                -sd $TEST_BSP_ROOT/sd.bin  \
+                > qemu_output_$TEST_QEMU_ARCH.log  2>&1 &
+          else 
+            qemu-system-$TEST_QEMU_ARCH \
+                -nographic \
+                -M $TEST_QEMU_MACHINE \
+                -kernel $TEST_BSP_ROOT/rtthread.bin  \
+                > qemu_output_$TEST_QEMU_ARCH.log  2>&1 &
+          fi 
+
+          QEMU_PID=$!
+          disown $QEMU_PID
+      
+      - name: Monitor qemu log
+        if: ${{ matrix.platform.RUN == 'yes' && env.TOOLCHAIN_INSTALLED != '' && success() }}
+        run: |
+          FAILURE_DETECTED=false
+          ERROR_LOGS=""
           
-    #       if [[ "$line" == *"[==========] [ utest    ] end"* ]]; then
-    #         echo "Utest run completed. Exiting log monitoring..."
-    #         if $FAILURE_DETECTED; then
-    #           echo "Error: Failures detected in logs. Below are the failure details..."
-    #           echo "$ERROR_LOGS"
-    #           exit 1
-    #         fi
-    #         break
-    #       fi
-    #     done
+          tail -n 0 -f qemu_output_$TEST_QEMU_ARCH.log | while read line; do
+            echo $line
+            if [[ "$line" == *"[  FAILED  ] [ result   ]"* ]]; then
+              ERROR_LOGS="$ERROR_LOGS$line"$'\n'
+              FAILURE_DETECTED=true
+            fi
+            
+            if [[ "$line" == *"[==========] [ utest    ] finished"* ]]; then
+              if $FAILURE_DETECTED; then
+                echo "Error: Failures detected in logs. Below are the failure details..."
+                echo "$ERROR_LOGS"
+                exit 1
+              fi
+              echo "Utest run completed. Exiting log monitoring..."
+              break
+            fi
+          done
