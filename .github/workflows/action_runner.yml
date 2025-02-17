@@ -54,9 +54,7 @@ jobs:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
           # 修复点：修正heredoc语法和输出重定向 
-          python3 <<'PYTHON_EOF' > relevant_configs.json  
-          import json, os, fnmatch 
-       
+          python3 -c "import json, os, fnmatch 
           try:
               with open('.github/utest/config_paths.json')  as f:
                   config_mappings = json.load(f) 
@@ -66,10 +64,8 @@ jobs:
           except Exception as e:
               print(f"文件读取错误: {str(e)}")
               exit(1)
-       
           changed_files = os.environ.get('CHANGED_FILES',  '').split()
           print(f"[DEBUG] 变更文件列表: {changed_files}", flush=True)
-       
           relevant_configs = set()
           for config_file, patterns in config_mappings.items(): 
               for pattern in patterns:
@@ -81,9 +77,7 @@ jobs:
                           break 
                   if config_file in relevant_configs:
                       break 
-       
-          print(json.dumps(list(relevant_configs),  indent=2))
-          PYTHON_EOF 
+          print(json.dumps(list(relevant_configs),  indent=2))" > relevant_configs.json
        
           # 添加文件存在性检查（Shell命令部分）
           if [ ! -f relevant_configs.json  ]; then 
