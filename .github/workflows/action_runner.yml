@@ -53,10 +53,9 @@ jobs:
             exit 1
           fi
 
-          changed_files=$(echo "$response" | jq -r '.[].filename' || echo "")
-          if [ -z "$changed_files" ]; then
-            break
-          fi
+          # 修改 Shell 脚本中的 changed_files 赋值逻辑
+          changed_files=$(echo "$response" | jq -r '.[].filename' | tr '\n' ' ')
+          echo "CHANGED_FILES=${changed_files}" >> $GITHUB_ENV
           
           # 输出变更的文件路径（如 kernel/thread.cfg，而非 .github/utest/kernel/thread.cfg）
           echo "Changed files from this PR: $changed_files"
@@ -70,21 +69,31 @@ jobs:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
           python3 -c "import json, os, fnmatch
-          with open('.github/utest/config_paths.json') as f:
-              config_mappings = json.load(f)
-          changed_files = os.environ['CHANGED_FILES'].split()
+          try:
+              with open('.github/utest/config_paths.json')  as f:
+                  config_mappings = json.load(f) 
+          except json.JSONDecodeError as e:
+              print(f"JSON 解析失败：{e}")
+              exit(1)
+          except Exception as e:
+              print(f"文件读取错误：{e}")
+              exit(1)
+          
+          changed_files = os.environ.get('CHANGED_FILES',  '').split()
+          print(f"Debug - 变更文件列表: {changed_files}")  # 添加调试日志
+          
           relevant_configs = set()
-          for config_file, patterns in config_mappings.items():
+          for config_file, patterns in config_mappings.items(): 
               for pattern in patterns:
-                  matched = False
                   for file in changed_files:
-                      if fnmatch.fnmatch(file, pattern):
-                          relevant_configs.add(config_file)
-                          matched = True
+                      if fnmatch.fnmatch(file,  pattern):
+                          print(f"匹配成功：{file} -> {config_file}（模式：{pattern}）")  # 添加匹配日志
+                          relevant_configs.add(config_file) 
                           break
-                  if matched:
+                  if config_file in relevant_configs:
                       break
-          print(json.dumps(list(relevant_configs)))" > relevant_configs.json
+          
+          print(json.dumps(list(relevant_configs))) " > relevant_configs.json
           
           echo "view relevant_configs.json:"
           cat relevant_configs.json
