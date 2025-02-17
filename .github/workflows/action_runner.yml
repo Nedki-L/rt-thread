@@ -40,7 +40,7 @@ jobs:
           changed_files=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | \
-            jq -r '.[].filename')
+            jq -r '.[] | .filename')
 
           # 将变更的文件输出为环境变量
           echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
