@@ -56,11 +56,15 @@ jobs:
           # 解码 URL 编码的文件路径并提取文件名
           changed_files=$(echo "$response" | jq -r '.[] | .filename | @uri' | sed 's/%2F/\//g')
         
+          # 处理文件路径，避免特殊字符问题
+          # 替换路径中的斜杠为下划线，这样就可以作为环境变量
+          changed_files_for_env=$(echo "$changed_files" | sed 's/\//_/g')
+        
           # 输出变更文件路径
           echo "Changed files: $changed_files"
         
-          # 输出到环境变量
-          echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+          # 输出到环境变量，替换路径中的斜杠为下划线
+          echo "CHANGED_FILES=$changed_files_for_env" >> $GITHUB_ENV
 
       - name: Determine relevant configs
         id: set-configs
