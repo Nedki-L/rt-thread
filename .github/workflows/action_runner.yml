@@ -36,35 +36,32 @@ jobs:
       - name: Get changed files via GitHub API
         id: changed-files
         run: |
-          # 通过 GitHub API 获取 PR 的变更文件列表
-          response=$(curl -s \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files")
-        
-          # 打印返回的原始 JSON 数据，以便调试
-          echo "Response from GitHub API:"
-          echo "$response"
-        
-          # 确保返回的数据是有效的 JSON 格式
-          if echo "$response" | jq empty; then
-            echo "Valid JSON response"
-          else
-            echo "Invalid JSON response"
-            exit 1
-          fi
-        
-          # 解码 URL 编码的文件路径并提取文件名
-          changed_files=$(echo "$response" | jq -r '.[] | .filename | @uri' | sed 's/%2F/\//g')
-        
-          # 处理文件路径，避免特殊字符问题
-          # 替换路径中的斜杠为下划线，这样就可以作为环境变量
-          changed_files_for_env=$(echo "$changed_files" | sed 's/\//_/g')
-        
-          # 输出变更文件路径
-          echo "Changed files: $changed_files"
-        
-          # 输出到环境变量，替换路径中的斜杠为下划线
-          echo "CHANGED_FILES=$changed_files_for_env" >> $GITHUB_ENV
+            # 获取 PR 变更文件列表并打印返回的原始 JSON 数据
+            response=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files")
+            
+            # 打印返回的原始 JSON 数据，以便调试
+            echo "Response from GitHub API:"
+            echo "$response"
+            
+            # 确保返回的数据是有效的 JSON 格式
+            if echo "$response" | jq empty; then
+              echo "Valid JSON response"
+            else
+              echo "Invalid JSON response"
+              exit 1
+            fi
+            
+            # 提取文件名并去除 .github/utest 前缀部分
+            changed_files=$(echo "$response" | jq -r '.[] | .filename' | sed 's|^\.github/utest/||')
+            
+            # 输出变更的文件路径
+            echo "Changed files (relative to .github/utest): $changed_files"
+            
+            # 输出到环境变量
+            echo "CHANGED_FILES=$changed_files" >> $GITHUB_ENV
+
 
       - name: Determine relevant configs
         id: set-configs
