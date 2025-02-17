@@ -53,8 +53,8 @@ jobs:
         env:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
-          # 修复点：使用标准heredoc格式并确保输出重定向正确 
-          python3 << 'EOF' > relevant_configs.json  
+          # 修复点：修正heredoc语法和输出重定向 
+          python3 <<'PYTHON_EOF' > relevant_configs.json  
           import json, os, fnmatch 
        
           try:
@@ -83,9 +83,9 @@ jobs:
                       break 
        
           print(json.dumps(list(relevant_configs),  indent=2))
-          EOF 
+          PYTHON_EOF 
        
-          # 添加文件存在性检查 
+          # 添加文件存在性检查（Shell命令部分）
           if [ ! -f relevant_configs.json  ]; then 
             echo "错误：配置文件未生成"
             exit 1 
@@ -95,7 +95,7 @@ jobs:
           cat relevant_configs.json  
           
           # 安全写入输出变量 
-          json_content=$(cat relevant_configs.json  | jq -c .)
+          json_content=$(jq -c . < relevant_configs.json) 
           echo "config_files=${json_content}" >> $GITHUB_OUTPUT 
 
   test:
