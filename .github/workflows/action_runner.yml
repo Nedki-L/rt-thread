@@ -24,81 +24,66 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest 
     outputs:
-      config_files: ${{ steps.set-configs.outputs.config_files }}
+      config_files: ${{ steps.set-configs.outputs.config_files  }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 
         with:
-          fetch-depth: 0
-          ref: ${{ github.head_ref }}
-
-      - name: Get changed files via GitHub API
-        id: changed-files
+          fetch-depth: 0 
+          ref: ${{ github.head_ref  }}
+ 
+      - name: Get changed files via GitHub API 
+        id: changed-files 
         run: |
-          # 获取 PR 变更文件列表并打印返回的原始 JSON 数据
+          # 修复点1：处理换行符问题 
           response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?page=$page&per_page=100")
+            "https://api.github.com/repos/${{  github.repository  }}/pulls/${{ github.event.pull_request.number  }}/files")
           
-          # 打印返回的原始 JSON 数据，以便调试
-          echo "Response from GitHub API:"
-          echo "$response"
-          
-          # 确保返回的数据是有效的 JSON 格式
-          if echo "$response" | jq empty; then
-            echo "Valid JSON response"
-          else
-            echo "Invalid JSON response"
-            exit 1
-          fi
-
-          # 修改 Shell 脚本中的 changed_files 赋值逻辑
+          # 将换行符转换为空格 
           changed_files=$(echo "$response" | jq -r '.[].filename' | tr '\n' ' ')
-          echo "CHANGED_FILES=${changed_files}" >> $GITHUB_ENV
           
-          # 输出变更的文件路径（如 kernel/thread.cfg，而非 .github/utest/kernel/thread.cfg）
-          echo "Changed files from this PR: $changed_files"
-          
-          # 安全写入环境变量
-          echo "CHANGED_FILES='${changed_files}'" >> $GITHUB_ENV
-
-      - name: Determine relevant configs
-        id: set-configs
+          # 修复点2：安全写入环境变量 
+          echo "CHANGED_FILES=${changed_files}" >> $GITHUB_ENV 
+          echo "已获取变更文件列表：${changed_files}"
+ 
+      - name: Determine relevant configs 
+        id: set-configs 
         env:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
-          python3 -c "import json, os, fnmatch
+          # 修复点3：增强的Python解析脚本 
+          python3 <<EOF 
+          import json, os, fnmatch 
+ 
           try:
               with open('.github/utest/config_paths.json')  as f:
                   config_mappings = json.load(f) 
-          except json.JSONDecodeError as e:
-              print(f"JSON 解析失败：{e}")
-              exit(1)
           except Exception as e:
-              print(f"文件读取错误：{e}")
+              print(f"JSON解析错误: {str(e)}")
               exit(1)
-          
+ 
           changed_files = os.environ.get('CHANGED_FILES',  '').split()
-          print(f"Debug - 变更文件列表: {changed_files}")  # 添加调试日志
-          
+          print(f"调试信息 - 变更文件列表: {changed_files}")
+ 
           relevant_configs = set()
           for config_file, patterns in config_mappings.items(): 
               for pattern in patterns:
                   for file in changed_files:
-                      if fnmatch.fnmatch(file,  pattern):
-                          print(f"匹配成功：{file} -> {config_file}（模式：{pattern}）")  # 添加匹配日志
+                      if fnmatch.fnmatch(file,  pattern.strip()): 
+                          print(f"匹配成功: {file} => {config_file} (模式: {pattern})")
                           relevant_configs.add(config_file) 
-                          break
+                          break 
                   if config_file in relevant_configs:
-                      break
-          
-          print(json.dumps(list(relevant_configs))) " > relevant_configs.json
-          
-          echo "view relevant_configs.json:"
-          cat relevant_configs.json
-          echo "end view"
-          echo "config_files=$(cat relevant_configs.json)" >> $GITHUB_OUTPUT
+                      break 
+ 
+          print(json.dumps(list(relevant_configs))) 
+          EOF > relevant_configs.json  
+ 
+          echo "生成配置文件列表："
+          cat relevant_configs.json  
+          echo "config_files=$(cat relevant_configs.json)"  >> $GITHUB_OUTPUT
 
   test:
     runs-on: ubuntu-22.04
