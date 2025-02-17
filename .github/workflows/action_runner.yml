@@ -53,89 +53,71 @@ jobs:
         env:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
-          # 创建临时脚本文件 
-          SCRIPT_FILE=$(mktemp /tmp/find_configs.py) 
-          
-          # 写入Python脚本内容（注意缩进格式）
-          cat > $SCRIPT_FILE << 'PYTHON_EOF'
+          # 创建临时Python脚本（带错误检查）
+          SCRIPT_FILE=$(mktemp /tmp/ci_script.py)  || {
+              echo "::error::无法创建临时文件"
+              exit 1 
+          }
+           
+          # 写入Python脚本内容（注意：保持左侧无缩进）
+          cat > "$SCRIPT_FILE" <<EOF 
           import json 
           import os 
           import fnmatch 
           import sys 
            
-          def main():
+          def load_config():
+              config_path = '.github/utest/config_paths.json' 
+              if not os.path.exists(config_path): 
+                  print(f"[ERROR] 配置文件 {config_path} 缺失")
+                  sys.exit(101) 
               try:
-                  # 配置路径检查 
-                  config_path = '.github/utest/config_paths.json' 
-                  if not os.path.exists(config_path): 
-                      print(f"[ERROR] 配置文件 {config_path} 不存在")
-                      sys.exit(1) 
-                      
                   with open(config_path) as f:
-                      config_mappings = json.load(f) 
-                      
-                  # 获取环境变量（带空值保护）
-                  changed_files = os.environ.get('CHANGED_FILES',  '').split()
-                  print(f"[DEBUG] 变更文件列表: {changed_files}")
-                  
-                  relevant_configs = set()
-                  
-                  # 三级匹配验证 
-                  for config_file, patterns in config_mappings.items(): 
-                      for pattern in patterns:
-                          pattern_clean = pattern.strip() 
-                          for file in changed_files:
-                              if fnmatch.fnmatch(file,  pattern_clean):
-                                  print(f"[MATCH] {file} => {config_file} (模式: {pattern_clean})")
-                                  relevant_configs.add(config_file) 
-                                  break  # 匹配到即跳出当前模式循环 
-                          if config_file in relevant_configs:
-                              break  # 已匹配则跳过其他模式 
-                              
-                  # 输出结果验证 
-                  if not relevant_configs:
-                      print("[WARNING] 未匹配到任何配置文件")
-                      
-                  print(json.dumps(list(relevant_configs),  indent=2))
-                  
+                      return json.load(f) 
               except json.JSONDecodeError as e:
-                  print(f"[ERROR] JSON解析失败: {str(e)}")
-                  sys.exit(1) 
-              except Exception as e:
-                  print(f"[ERROR] 执行异常: {str(e)}")
-                  sys.exit(1) 
+                  print(f"[ERROR] JSON解析失败: {e.doc[:30]}...  (行:{e.lineno})") 
+                  sys.exit(102) 
+           
+          def match_patterns(config_mappings):
+              changed_files = os.environ.get('CHANGED_FILES',  '').split()
+              print(f"[DEBUG] 待匹配文件: {changed_files}")
+              
+              relevant_configs = set()
+              for config_file, patterns in config_mappings.items(): 
+                  for pattern in patterns:
+                      if any(fnmatch.fnmatch(f,  pattern.strip())  for f in changed_files):
+                          print(f"[MATCH] {pattern} => {config_file}")
+                          relevant_configs.add(config_file) 
+                          break 
+              return relevant_configs 
            
           if __name__ == "__main__":
-              main()
-          PYTHON_EOF 
-       
-          # 执行脚本并生成结果文件 
-          python3 $SCRIPT_FILE > relevant_configs.json  
-          EXIT_CODE=$?
-          
-          # 错误处理机制 
-          if [ $EXIT_CODE -ne 0 ]; then 
-              echo "::error::配置文件分析失败，错误码: $EXIT_CODE"
-              rm -f $SCRIPT_FILE 
-              exit $EXIT_CODE 
+              config = load_config()
+              result = match_patterns(config)
+              if not result:
+                  print("[WARNING] 未匹配到任何配置")
+              with open('relevant_configs.json',  'w') as f:
+                  json.dump(list(result),  f, indent=2)
+          EOF 
+           
+          # 执行并处理结果（带超时保护）
+          timeout 30 python3 "$SCRIPT_FILE" || {
+              echo "::error::脚本执行超时或失败"
+              rm -f "$SCRIPT_FILE"
+              exit 1 
+          }
+           
+          # 验证输出文件 
+          if ! jq empty relevant_configs.json  2>/dev/null; then 
+              echo "::error::输出文件格式异常"
+              exit 2 
           fi 
-          
-          # 结果文件验证 
-          if [ ! -s relevant_configs.json  ]; then 
-              echo "::warning::生成的配置文件为空"
-              echo "[]" > relevant_configs.json  
-          fi 
-          
-          # 输出调试信息 
-          echo "生成的配置文件内容："
-          jq . relevant_configs.json  
-          
-          # 写入输出变量（带格式验证）
-          json_content=$(jq -c . relevant_configs.json) 
-          echo "config_files=${json_content}" >> $GITHUB_OUTPUT 
-          
-          # 清理临时文件 
-          rm -f $SCRIPT_FILE 
+           
+          # 设置输出变量 
+          echo "config_files=$(jq -c . relevant_configs.json)"  >> $GITHUB_OUTPUT 
+           
+          # 清理临时文件（带错误抑制）
+          rm -f "$SCRIPT_FILE" 2>/dev/null 
 
   test:
     runs-on: ubuntu-22.04
