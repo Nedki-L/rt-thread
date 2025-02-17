@@ -52,15 +52,14 @@ jobs:
             echo "Invalid JSON response"
             exit 1
           fi
-          
-          # 提取文件名并去除 .github/utest 前缀部分
-          changed_files=$(echo "$response" | jq -r '.[] | .filename' | 
-                         grep "^\.github/utest/" |
-                         sed 's|^\.github/utest/||' |
-                         tr '\n' ' ')
+
+          changed_files=$(echo "$response" | jq -r '.[].filename' || echo "")
+          if [ -z "$changed_files" ]; then
+            break
+          fi
           
           # 输出变更的文件路径（如 kernel/thread.cfg，而非 .github/utest/kernel/thread.cfg）
-          echo "Changed files (relative to .github/utest): $changed_files"
+          echo "Changed files from this PR: $changed_files"
           
           # 安全写入环境变量
           echo "CHANGED_FILES='${changed_files}'" >> $GITHUB_ENV
