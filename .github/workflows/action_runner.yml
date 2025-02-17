@@ -54,7 +54,7 @@ jobs:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
           # 创建临时Python脚本（带错误检查）
-          SCRIPT_FILE=$(mktemp /tmp/ci_script.py)  || {
+          SCRIPT_FILE=$(mktemp /tmp/ci_script_XXXXXX.py)  || {
               echo "::error::无法创建临时文件"
               exit 1 
           }
