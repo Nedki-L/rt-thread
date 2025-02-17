@@ -24,73 +24,100 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest 
     outputs:
-      config_files: ${{ steps.set-configs.outputs.config_files }}
+      config_files: ${{ steps.set-configs.outputs.config_files  }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 
         with:
-          fetch-depth: 0
-          ref: ${{ github.head_ref }}
-
-      - name: Get changed files via GitHub API
-        id: changed-files
+          fetch-depth: 0 
+          ref: ${{ github.head_ref  }}
+ 
+      - name: Get changed files via GitHub API 
+        id: changed-files 
         run: |
-          # 获取 PR 变更文件列表并打印返回的原始 JSON 数据
+          # 修复点1：处理换行符问题 
           response=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files")
+            "https://api.github.com/repos/${{  github.repository  }}/pulls/${{ github.event.pull_request.number  }}/files")
           
-          # 打印返回的原始 JSON 数据，以便调试
-          echo "Response from GitHub API:"
-          echo "$response"
+          # 将换行符转换为空格 
+          changed_files=$(echo "$response" | jq -r '.[].filename' | tr '\n' ' ')
           
-          # 确保返回的数据是有效的 JSON 格式
-          if echo "$response" | jq empty; then
-            echo "Valid JSON response"
-          else
-            echo "Invalid JSON response"
-            exit 1
-          fi
-          
-          # 提取文件名并去除 .github/utest 前缀部分
-          changed_files=$(echo "$response" | jq -r '.[] | .filename' | 
-                         grep "^\.github/utest/" |
-                         sed 's|^\.github/utest/||' |
-                         tr '\n' ' ')
-          
-          # 输出变更的文件路径（如 kernel/thread.cfg，而非 .github/utest/kernel/thread.cfg）
-          echo "Changed files (relative to .github/utest): $changed_files"
-          
-          # 安全写入环境变量
-          echo "CHANGED_FILES='${changed_files}'" >> $GITHUB_ENV
-
-      - name: Determine relevant configs
-        id: set-configs
+          # 修复点2：安全写入环境变量 
+          echo "CHANGED_FILES=${changed_files}" >> $GITHUB_ENV 
+          echo "已获取变更文件列表：${changed_files}"
+ 
+      - name: Determine relevant configs 
+        id: set-configs 
         env:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
-          python3 -c "import json, os, fnmatch
-          with open('.github/utest/config_paths.json') as f:
-              config_mappings = json.load(f)
-          changed_files = os.environ['CHANGED_FILES'].split()
-          relevant_configs = set()
-          for config_file, patterns in config_mappings.items():
-              for pattern in patterns:
-                  matched = False
-                  for file in changed_files:
-                      if fnmatch.fnmatch(file, pattern):
-                          relevant_configs.add(config_file)
-                          matched = True
-                          break
-                  if matched:
-                      break
-          print(json.dumps(list(relevant_configs)))" > relevant_configs.json
-          
-          echo "view relevant_configs.json:"
-          cat relevant_configs.json
-          echo "end view"
-          echo "config_files=$(cat relevant_configs.json)" >> $GITHUB_OUTPUT
+          # 创建临时Python脚本（带错误检查）
+          SCRIPT_FILE=$(mktemp /tmp/ci_script_XXXXXX.py)  || {
+              echo "::error::无法创建临时文件"
+              exit 1 
+          }
+           
+          # 写入Python脚本内容（注意：保持左侧无缩进）
+          cat > "$SCRIPT_FILE" <<EOF 
+          import json 
+          import os 
+          import fnmatch 
+          import sys 
+           
+          def load_config():
+              config_path = '.github/utest/config_paths.json' 
+              if not os.path.exists(config_path): 
+                  print(f"[ERROR] 配置文件 {config_path} 缺失")
+                  sys.exit(101) 
+              try:
+                  with open(config_path) as f:
+                      return json.load(f) 
+              except json.JSONDecodeError as e:
+                  print(f"[ERROR] JSON解析失败: {e.doc[:30]}...  (行:{e.lineno})") 
+                  sys.exit(102) 
+           
+          def match_patterns(config_mappings):
+              changed_files = os.environ.get('CHANGED_FILES',  '').split()
+              print(f"[DEBUG] 待匹配文件: {changed_files}")
+              
+              relevant_configs = set()
+              for config_file, patterns in config_mappings.items(): 
+                  for pattern in patterns:
+                      if any(fnmatch.fnmatch(f,  pattern.strip())  for f in changed_files):
+                          print(f"[MATCH] {pattern} => {config_file}")
+                          relevant_configs.add(config_file) 
+                          break 
+              return relevant_configs 
+           
+          if __name__ == "__main__":
+              config = load_config()
+              result = match_patterns(config)
+              if not result:
+                  print("[WARNING] 未匹配到任何配置")
+              with open('relevant_configs.json',  'w') as f:
+                  json.dump(list(result),  f, indent=2)
+          EOF 
+           
+          # 执行并处理结果（带超时保护）
+          timeout 30 python3 "$SCRIPT_FILE" || {
+              echo "::error::脚本执行超时或失败"
+              rm -f "$SCRIPT_FILE"
+              exit 1 
+          }
+           
+          # 验证输出文件 
+          if ! jq empty relevant_configs.json  2>/dev/null; then 
+              echo "::error::输出文件格式异常"
+              exit 2 
+          fi 
+           
+          # 设置输出变量 
+          echo "config_files=$(jq -c . relevant_configs.json)"  >> $GITHUB_OUTPUT 
+           
+          # 清理临时文件（带错误抑制）
+          rm -f "$SCRIPT_FILE" 2>/dev/null 
 
   test:
     runs-on: ubuntu-22.04
