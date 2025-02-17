@@ -53,37 +53,50 @@ jobs:
         env:
           CHANGED_FILES: ${{ env.CHANGED_FILES }}
         run: |
-          # 修复点3：增强的Python解析脚本 
-          python3 <<EOF 
+          # 修复点：使用标准heredoc格式并确保输出重定向正确 
+          python3 << 'EOF' > relevant_configs.json  
           import json, os, fnmatch 
- 
+       
           try:
               with open('.github/utest/config_paths.json')  as f:
                   config_mappings = json.load(f) 
-          except Exception as e:
+          except json.JSONDecodeError as e:
               print(f"JSON解析错误: {str(e)}")
               exit(1)
- 
+          except Exception as e:
+              print(f"文件读取错误: {str(e)}")
+              exit(1)
+       
           changed_files = os.environ.get('CHANGED_FILES',  '').split()
-          print(f"调试信息 - 变更文件列表: {changed_files}")
- 
+          print(f"[DEBUG] 变更文件列表: {changed_files}", flush=True)
+       
           relevant_configs = set()
           for config_file, patterns in config_mappings.items(): 
               for pattern in patterns:
+                  pattern_clean = pattern.strip() 
                   for file in changed_files:
-                      if fnmatch.fnmatch(file,  pattern.strip()): 
-                          print(f"匹配成功: {file} => {config_file} (模式: {pattern})")
+                      if fnmatch.fnmatch(file,  pattern_clean):
+                          print(f"[MATCH] {file} => {config_file} (模式: {pattern_clean})", flush=True)
                           relevant_configs.add(config_file) 
                           break 
                   if config_file in relevant_configs:
                       break 
- 
-          print(json.dumps(list(relevant_configs))) 
-          EOF > relevant_configs.json  
- 
-          echo "生成配置文件列表："
+       
+          print(json.dumps(list(relevant_configs),  indent=2))
+          EOF 
+       
+          # 添加文件存在性检查 
+          if [ ! -f relevant_configs.json  ]; then 
+            echo "错误：配置文件未生成"
+            exit 1 
+          fi 
+       
+          echo "生成的配置文件内容："
           cat relevant_configs.json  
-          echo "config_files=$(cat relevant_configs.json)"  >> $GITHUB_OUTPUT
+          
+          # 安全写入输出变量 
+          json_content=$(cat relevant_configs.json  | jq -c .)
+          echo "config_files=${json_content}" >> $GITHUB_OUTPUT 
 
   test:
     runs-on: ubuntu-22.04
