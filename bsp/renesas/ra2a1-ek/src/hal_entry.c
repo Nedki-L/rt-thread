@@ -11,7 +11,7 @@
 #include <rtthread.h>
 #include "hal_data.h"
 #ifdef RT_USING_NANO
-#include <drv_gpio.h>
+    #include <drv_gpio.h>
 #else
 #include <rtdevice.h>
 #endif /* RT_USING_NANO */
@@ -21,11 +21,9 @@
 void hal_entry(void)
 {
     rt_kprintf("\nHello RT-Thread!\n");
-    while (1)
-    {
-        rt_pin_write(LED_PIN, PIN_HIGH);
+    while (1){
+        rt_pin_write(LED_PIN,PIN_HIGH);
         rt_thread_mdelay(500);
         rt_pin_write(LED_PIN, PIN_LOW);
         rt_thread_mdelay(500);
-    }
-}
+    }}
