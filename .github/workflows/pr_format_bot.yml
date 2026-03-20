@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   notify-format:
-    # if: github.repository_owner == 'RT-Thread'
+    if: github.repository_owner == 'Nedki-L'
     runs-on: ubuntu-latest
     steps:
       - name: Check if first commit and add comment
