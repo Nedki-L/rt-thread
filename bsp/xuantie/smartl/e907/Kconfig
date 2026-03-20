@@ -1,27 +1,10 @@
 mainmenu "RT-Thread Configuration"
 
-config BSP_DIR
-    string
-    option env="BSP_ROOT"
-    default "."
+BSP_DIR := .
 
-config RTT_DIR
-    string
-    option env="RTT_ROOT"
-    default "rt-thread"
+RTT_DIR := ../../../../
 
-# you can change the RTT_ROOT default "rt-thread"
-# example : default "F:/git_repositories/rt-thread"
-
-config PKGS_DIR
-    string
-    option env="PKGS_ROOT"
-    default "packages"
-
-config ENV_DIR
-    string
-    option env="ENV_ROOT"
-    default "/"
+PKGS_DIR := packages
 
 config XUANTIAN_SMARTL_E907
     bool
@@ -30,6 +13,36 @@ config XUANTIAN_SMARTL_E907
     select RT_USING_USER_MAIN
     default y
 
-source "$RTT_DIR/Kconfig"
+menu "CPU Architecture Features"
+
+    menuconfig ENABLE_FPU
+        bool "Enable FPU"
+        select ARCH_RISCV_FPU
+        default y
+
+    if ENABLE_FPU
+        choice
+            prompt "FPU Configuration"
+            default ARCH_RISCV_FPU_D
+
+            config ARCH_RISCV_FPU_S
+                bool "Enable [F] Extension"
+
+            config ARCH_RISCV_FPU_D
+                bool "Enable [F][D] Extension"
+        endchoice
+    endif
+
+    menuconfig ENABLE_DSP
+        bool "Enable DSP"
+        select ARCH_RISCV_DSP
+        default y
+
+config ARCH_RISCV_DSP
+    bool
+
+endmenu
+
+source "$(RTT_DIR)/Kconfig"
 source "$PKGS_DIR/Kconfig"
 source "$BSP_DIR/board/Kconfig"
